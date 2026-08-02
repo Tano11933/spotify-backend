@@ -1,0 +1,24 @@
+# Environment variables (jangan pernah push ini, ada password!)
+.env
+
+# Go build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go test/coverage
+*.test
+*.out
+
+# Go vendor (kalau nggak pakai vendoring)
+vendor/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
