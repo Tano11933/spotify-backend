@@ -25,15 +25,19 @@ func main() {
 	rdb := cache.ConnectRedis()
 	_ = rdb
 
-	db.AutoMigrate(&model.Artist{})
+	db.AutoMigrate(&model.Artist{}, &model.Song{})
 
-	// wiring
 	artistRepo := repository.NewArtistRepository(db)
 	artistService := service.NewArtistService(artistRepo)
 	artistHandler := handler.NewArtistHandler(artistService)
 
+	songRepo := repository.NewSongRepository(db)
+	songService := service.NewSongService(songRepo, artistRepo)
+	songHandler := handler.NewSongHandler(songService)
+
 	h := &router.Handlers{
 		Artist: artistHandler,
+		Song:   songHandler,
 	}
 
 	app := fiber.New()

@@ -7,6 +7,7 @@ import (
 
 type Handlers struct {
 	Artist *handler.ArtistHandler
+	Song   *handler.SongHandler
 }
 
 func SetupRoutes(app *fiber.App, h *Handlers) {
@@ -22,6 +23,12 @@ func SetupRoutes(app *fiber.App, h *Handlers) {
 	artists.Get("/:id", h.Artist.GetByID)
 	artists.Put("/:id", h.Artist.Update)
 	artists.Delete("/:id", h.Artist.Delete)
+	artists.Get("/:artistId/songs", h.Song.GetByArtist)
 
-	// nanti fitur baru (song, album, dll) tinggal ditambah di sini
+	songs := api.Group("/songs")
+	songs.Post("/", h.Song.Create)
+	songs.Get("/", h.Song.GetAll)
+	songs.Get("/:id", h.Song.GetByID)
+	songs.Put("/:id", h.Song.Update)
+	songs.Delete("/:id", h.Song.Delete)
 }
