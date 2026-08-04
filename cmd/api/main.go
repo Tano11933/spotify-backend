@@ -31,6 +31,10 @@ func main() {
 	artistService := service.NewArtistService(artistRepo)
 	artistHandler := handler.NewArtistHandler(artistService)
 
+	albumRepo := repository.NewAlbumRepository(db)
+	albumService := service.NewAlbumService(albumRepo, artistRepo)
+	albumHandler := handler.NewAlbumHandler(albumService)
+
 	songRepo := repository.NewSongRepository(db)
 	songService := service.NewSongService(songRepo, artistRepo)
 	songHandler := handler.NewSongHandler(songService)
@@ -38,6 +42,7 @@ func main() {
 	h := &router.Handlers{
 		Artist: artistHandler,
 		Song:   songHandler,
+		Album:  albumHandler,
 	}
 
 	app := fiber.New()

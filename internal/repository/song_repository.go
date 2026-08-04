@@ -14,7 +14,10 @@ func NewSongRepository(db *gorm.DB) *SongRepository {
 }
 
 func (r *SongRepository) Create(song *model.Song) error {
-	return r.db.Create(song).Error
+	if err := r.db.Create(song).Error; err != nil {
+		return err
+	}
+	return r.db.Preload("Artist").Preload("Album").First(song, song.ID).Error
 }
 
 func (r *SongRepository) FindAll() ([]model.Song, error) {

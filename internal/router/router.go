@@ -8,11 +8,12 @@ import (
 type Handlers struct {
 	Artist *handler.ArtistHandler
 	Song   *handler.SongHandler
+	Album  *handler.AlbumHandler
 }
 
 func SetupRoutes(app *fiber.App, h *Handlers) {
 	app.Get("/health", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{"status": "ok", "message": "Spotify backend is running 🎵"})
+		return c.JSON(fiber.Map{"status": "ok", "message": "Spotify backend is running"})
 	})
 
 	api := app.Group("/api")
@@ -31,4 +32,11 @@ func SetupRoutes(app *fiber.App, h *Handlers) {
 	songs.Get("/:id", h.Song.GetByID)
 	songs.Put("/:id", h.Song.Update)
 	songs.Delete("/:id", h.Song.Delete)
+
+	albums := api.Group("/albums")
+	albums.Post("/", h.Album.Create)
+	albums.Get("/", h.Album.GetAll)
+	albums.Get("/:id", h.Album.GetByID)
+	albums.Put("/:id", h.Album.Update)
+	albums.Delete("/:id", h.Album.Delete)
 }

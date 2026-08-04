@@ -11,6 +11,9 @@ type Song struct {
 	ArtistID uint   `json:"artist_id" gorm:"not null" validate:"required"`
 	Artist   Artist `json:"artist,omitempty" gorm:"foreignKey:ArtistID" validate:"-"`
 
+	AlbumID *uint  `json:"album_id" validate:"omitempty"`
+	Album   *Album `json:"album,omitempty" gorm:"foreignKey:AlbumID" validate:"-"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
