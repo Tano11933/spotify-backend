@@ -19,7 +19,14 @@ func ConnectPostgres() *gorm.DB {
 		os.Getenv("DB_PORT"),
 	)
 
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
+		// TranslateError membuat GORM menerjemahkan error spesifik driver
+		// Postgres menjadi error milik GORM sendiri — misalnya pelanggaran
+		// unique constraint jadi gorm.ErrDuplicatedKey. Tanpa ini, repository
+		// harus mencocokkan pesan error mentah pgx sebagai string, yang pecah
+		// begitu versi driver atau versi Postgres berganti.
+		TranslateError: true,
+	})
 	if err != nil {
 		log.Fatal("Failed to connect to Postgres: ", err)
 	}
