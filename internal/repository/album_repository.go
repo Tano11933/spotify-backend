@@ -1,7 +1,11 @@
 package repository
 
 import (
+	"context"
+
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+
 	"spotify-backend/internal/model"
 )
 
@@ -13,32 +17,52 @@ func NewAlbumRepository(db *gorm.DB) *AlbumRepository {
 	return &AlbumRepository{db: db}
 }
 
-func (r *AlbumRepository) Create(album *model.Album) error {
-	if err := r.db.Create(album).Error; err != nil {
+func (r *AlbumRepository) Create(ctx context.Context, album *model.Album) error {
+	db := r.db.WithContext(ctx)
+
+	if err := db.Create(album).Error; err != nil {
 		return err
 	}
-	return r.db.Preload("Artist").First(album, album.ID).Error
+	// Baca ulang dengan Preload supaya response menyertakan data Artist,
+	// bukan cuma artist_id.
+	return db.Preload("Artist").First(album, album.ID).Error
 }
 
-func (r *AlbumRepository) FindAll() ([]model.Album, error) {
+func (r *AlbumRepository) FindAll(ctx context.Context) ([]model.Album, error) {
 	var albums []model.Album
-	err := r.db.Preload("Artist").Find(&albums).Error
+	err := r.db.WithContext(ctx).Preload("Artist").Find(&albums).Error
 	return albums, err
 }
 
-func (r *AlbumRepository) FindByID(id uint) (*model.Album, error) {
+func (r *AlbumRepository) FindByID(ctx context.Context, id uint) (*model.Album, error) {
 	var album model.Album
-	err := r.db.Preload("Artist").Preload("Songs").First(&album, id).Error
+	err := r.db.WithContext(ctx).
+		Preload("Artist").
+		Preload("Songs").
+		First(&album, id).Error
 	if err != nil {
-		return nil, err
+		return nil, translateNotFound(err)
 	}
 	return &album, nil
 }
 
-func (r *AlbumRepository) Update(album *model.Album) error {
-	return r.db.Save(album).Error
+func (r *AlbumRepository) Update(ctx context.Context, album *model.Album) error {
+	// Omit(clause.Associations) penting di sini. Secara default, Save() milik
+	// GORM ikut meng-upsert seluruh relasi yang terisi di struct — dan struct
+	// yang masuk ke sini berasal dari FindByID yang mem-Preload Artist dan Songs.
+	// Tanpa Omit, update judul album akan sekaligus menulis ulang baris artist
+	// dan SEMUA baris lagu di album itu, termasuk menimpa perubahan yang mungkin
+	// dilakukan request lain di antaranya.
+	return r.db.WithContext(ctx).Omit(clause.Associations).Save(album).Error
 }
 
-func (r *AlbumRepository) Delete(id uint) error {
-	return r.db.Delete(&model.Album{}, id).Error
+func (r *AlbumRepository) Delete(ctx context.Context, id uint) error {
+	result := r.db.WithContext(ctx).Delete(&model.Album{}, id)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
 }

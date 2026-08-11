@@ -1,9 +1,8 @@
 package handler
 
 import (
-	"strconv"
-
 	"github.com/gofiber/fiber/v2"
+
 	"spotify-backend/internal/model"
 	"spotify-backend/internal/service"
 	"spotify-backend/pkg/validator"
@@ -20,76 +19,77 @@ func NewAlbumHandler(service *service.AlbumService) *AlbumHandler {
 func (h *AlbumHandler) Create(c *fiber.Ctx) error {
 	var album model.Album
 	if err := c.BodyParser(&album); err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": "invalid request body"})
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
 	}
 
 	if err := validator.ValidateStruct(album); err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	if err := h.service.CreateAlbum(&album); err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	if err := h.service.CreateAlbum(c.UserContext(), &album); err != nil {
+		return respondError(c, "album", err)
 	}
 
-	return c.Status(201).JSON(album)
+	return c.Status(fiber.StatusCreated).JSON(album)
 }
 
 func (h *AlbumHandler) GetAll(c *fiber.Ctx) error {
-	albums, err := h.service.GetAllAlbums()
+	albums, err := h.service.GetAllAlbums(c.UserContext())
 	if err != nil {
-		return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		return respondError(c, "album", err)
 	}
 	return c.JSON(albums)
 }
 
 func (h *AlbumHandler) GetByID(c *fiber.Ctx) error {
-	id, err := strconv.Atoi(c.Params("id"))
+	id, err := parseUintParam(c, "id")
 	if err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": "invalid id"})
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
 	}
 
-	album, err := h.service.GetAlbumByID(uint(id))
+	album, err := h.service.GetAlbumByID(c.UserContext(), id)
 	if err != nil {
-		return c.Status(404).JSON(fiber.Map{"error": "album not found"})
+		return respondError(c, "album", err)
 	}
 	return c.JSON(album)
 }
 
 func (h *AlbumHandler) Update(c *fiber.Ctx) error {
-	id, err := strconv.Atoi(c.Params("id"))
+	id, err := parseUintParam(c, "id")
 	if err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": "invalid id"})
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
 	}
 
-	album, err := h.service.GetAlbumByID(uint(id))
+	album, err := h.service.GetAlbumByID(c.UserContext(), id)
 	if err != nil {
-		return c.Status(404).JSON(fiber.Map{"error": "album not found"})
+		return respondError(c, "album", err)
 	}
 
 	if err := c.BodyParser(album); err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": "invalid request body"})
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
 	}
+	album.ID = id
 
 	if err := validator.ValidateStruct(album); err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	if err := h.service.UpdateAlbum(album); err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	if err := h.service.UpdateAlbum(c.UserContext(), album); err != nil {
+		return respondError(c, "album", err)
 	}
 
 	return c.JSON(album)
 }
 
 func (h *AlbumHandler) Delete(c *fiber.Ctx) error {
-	id, err := strconv.Atoi(c.Params("id"))
+	id, err := parseUintParam(c, "id")
 	if err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": "invalid id"})
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
 	}
 
-	if err := h.service.DeleteAlbum(uint(id)); err != nil {
-		return c.Status(400).JSON(fiber.Map{"error": err.Error()})
+	if err := h.service.DeleteAlbum(c.UserContext(), id); err != nil {
+		return respondError(c, "album", err)
 	}
 
-	return c.JSON(fiber.Map{"message": "album deleted"})
+	return c.JSON(model.MessageResponse{Message: "album deleted"})
 }
