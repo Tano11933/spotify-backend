@@ -1,110 +1,209 @@
 # PRD — Spotify Clone (Portfolio Project)
 
-## 1. Ringkasan Proyek
+**Pemilik proyek:** Gabriel Gaetano Onen Baskara
+**Tujuan:** Portofolio backend developer — menunjukkan kemampuan Go, arsitektur multi-layer, relational DB design, caching, real-time protocol, dan integrasi frontend modern.
+**Status dokumen:** Living document — update seiring progress.
 
-**Nama proyek:** Spotify Clone Backend & Frontend
-**Tujuan:** Membangun aplikasi streaming musik (clone Spotify) sebagai portofolio, dengan fokus menunjukkan kemampuan backend Go yang production-grade (multi-layer architecture, caching, real-time, auth security) dan frontend React modern.
-**Target audiens dokumen ini:** Developer (P) dan Claude Code sebagai asisten implementasi.
+---
 
-## 2. Latar Belakang & Motivasi
+## 1. Overview
 
-Proyek ini dibuat untuk memperkuat portofolio dengan menunjukkan variasi tech stack di luar PHP/Laravel (stack utama P), khususnya Go untuk backend performant. Proyek dipilih karena scope-nya jelas, kompleksitasnya bertahap (CRUD sederhana → relasi → auth → real-time), dan hasilnya mudah didemokan.
+Backend + frontend clone Spotify sederhana, fokus pada kualitas arsitektur dan best practice (bukan replikasi fitur Spotify secara lengkap). Prioritas: kerapian kode, skalabilitas pola (bisa ditambah fitur tanpa refactor besar), dan variasi teknis yang menarik buat dibahas saat interview/portofolio.
+
+## 2. Tujuan Proyek
+
+- Menunjukkan kemampuan backend dengan bahasa selain PHP (Go)
+- Menunjukkan pemahaman arsitektur multi-layer (handler → service → repository → model)
+- Menunjukkan penggunaan Redis untuk hal nyata (bukan sekadar dipasang): caching, refresh token store, rate limiting
+- Menunjukkan kemampuan real-time (WebSocket)
+- Menunjukkan end-to-end auth flow yang aman (JWT + refresh token + reset password via email)
+- Menunjukkan integrasi frontend modern dengan validasi terstruktur (Zod)
 
 ## 3. Tech Stack
 
 ### Backend
-- **Bahasa:** Go
-- **Router/Framework:** Fiber v2
-- **ORM:** GORM
-- **Database:** PostgreSQL
-- **Cache & session store:** Redis
-- **Auth:** JWT (access token + refresh token, refresh token disimpan di Redis agar revocable)
-- **Real-time:** WebSocket (native `gofiber/websocket` atau `gorilla/websocket`)
-- **Email:** SMTP (untuk reset password)
-- **Arsitektur:** Multi-layer — Handler → Service → Repository → Model
+| Layer | Teknologi |
+|---|---|
+| Bahasa | Go |
+| Router/Framework | Fiber |
+| ORM | GORM |
+| Database | PostgreSQL |
+| Cache/Store | Redis |
+| Auth | JWT (access + refresh token), bcrypt |
+| Real-time | WebSocket (native `gorilla/websocket` atau `fasthttp/websocket` — kompatibel Fiber) |
+| Email | SMTP (untuk reset password) |
+| Validasi | `go-playground/validator` |
 
 ### Frontend
-- **Framework:** React + Vite + TypeScript (TSX)
-- **Styling:** Tailwind CSS **only** (tidak menggunakan component library seperti shadcn/MUI, murni utility classes)
-- **Validasi form:** Zod
-- **State management:** Bebas (Zustand/Redux/Context API — direkomendasikan Zustand karena ringan dan cocok untuk scope proyek ini, tapi keputusan akhir fleksibel)
-- **HTTP client:** Axios atau native fetch (disarankan Axios untuk interceptor refresh token)
+| Layer | Teknologi |
+|---|---|
+| Framework | React (Vite template `react-compiler-ts`) + TypeScript |
+| React Compiler | Aktif (stable v1.0) — auto-memoization, kurangi `useMemo`/`useCallback` manual |
+| Linter | Oxlint (bawaan template, bukan ESLint — jauh lebih cepat) |
+| Styling | Tailwind CSS v4 (via `@tailwindcss/vite`, config berbasis `@theme` di CSS) |
+| Validasi form | Zod + `react-hook-form` + `@hookform/resolvers` |
+| State management | Zustand |
+| HTTP client | Axios (dengan interceptor auto-refresh token) |
+| WebSocket client | Native `WebSocket` API browser |
+| Desain visual | Lihat `DESIGN.md` — terinspirasi Spotify asli (dark theme, hijau `#1DB954`) |
 
-### Infrastruktur Development
-- Docker Compose untuk Postgres & Redis (sudah berjalan)
-- Environment: Windows + Docker Desktop + WSL2
+### Infrastruktur Dev
+- Docker Compose (Postgres + Redis)
+- Git + GitHub
 
-## 4. Status Saat Ini (Sudah Selesai)
+---
 
-- [x] Setup project Go + Fiber + GORM + Postgres + Redis
-- [x] Struktur multi-layer (handler/service/repository/model)
-- [x] CRUD **Artist**
-- [x] CRUD **Song** (relasi `belongsTo` Artist, `belongsTo` Album opsional)
-- [x] CRUD **Album** (relasi `belongsTo` Artist, `hasMany` Song)
-- [x] Validasi input menggunakan `go-playground/validator`
-- [x] Routing terpisah (`internal/router`)
-- [x] Repo di-push ke GitHub
+## 4. Status Saat Ini (Progress)
 
-## 5. Scope Fitur Baru (To Be Built)
+✅ **Backend — SELESAI (belum di-commit, akan commit manual per-fitur):**
+- Setup project Go + Fiber + GORM + Postgres + Redis (Docker Compose)
+- CRUD Artist, Song (relasi ke Artist, opsional ke Album), Album (relasi ke Artist, hasMany Song)
+- Struktur multi-layer: `handler → service → repository → model`, validasi via struct tag
+- User Auth lengkap: register, login, refresh token, logout, middleware JWT
+- Forgot/Reset password via SMTP
+- Redis caching untuk endpoint read-heavy (Artist, Album list)
+- WebSocket hub + event `song:playing`, `song:created`
 
-### 5.1 Authentication & Authorization (JWT)
-- Register (email, password, name)
-- Login → menghasilkan access token (short-lived, ~15 menit) + refresh token (long-lived, ~7 hari, disimpan di Redis)
-- Refresh token endpoint
-- Logout (revoke refresh token dari Redis)
-- Middleware proteksi route (JWT Bearer token)
-- **Reset password via email (SMTP)**:
-  - User request reset → generate token reset (random, expire pendek ~15 menit) → simpan di Redis → kirim email berisi link/kode reset
-  - User submit token + password baru → validasi token → update password
+🔲 **Belum dikerjakan:**
+- Frontend: setup React + Vite + Tailwind + Zod + state management (lihat `ARCHITECTURE.md` §6 untuk checklist detail)
+- Docker: `Dockerfile` backend & frontend + `docker-compose.prod.yml` untuk mode full-stack demo (lihat `DOCKER.md`)
+- Playlist (many-to-many User ↔ Song) — opsional, prioritas setelah frontend dasar selesai
+- Unit testing service layer — opsional
 
-### 5.2 WebSocket (Real-time)
-- Use case yang relevan untuk Spotify clone:
-  - **"Now playing" broadcast** — ketika user memutar lagu, status bisa di-broadcast (misalnya untuk fitur "lihat teman sedang dengar apa", opsional/simulasi)
-  - **Live notification** sederhana (misalnya notifikasi like/follow), atau
-  - Minimal: endpoint WebSocket untuk **realtime playback sync** antara device (opsional, kompleksitas tinggi) — **untuk versi awal, cukup buat 1 use case sederhana**: broadcast "currently playing" ke channel per user/room, agar ada bukti nyata kemampuan WebSocket tanpa over-engineering.
-- Implementasi: 1 endpoint WebSocket (`/ws`), dengan handler yang connect ke Fiber's websocket upgrade, terhubung ke sebuah in-memory hub/broker sederhana (bisa dikombinasikan dengan Redis Pub/Sub jika ingin multi-instance ready).
+---
 
-### 5.3 Redis Caching
-- Cache untuk endpoint yang sering diakses dan jarang berubah, contoh:
-  - `GET /api/artists` (list artist) — cache 5 menit
-  - `GET /api/albums/:id` (detail album) — cache 5 menit
-  - Invalidasi cache otomatis saat data terkait di-create/update/delete
-- Refresh token storage (sudah dirancang di fase Auth)
-- Reset password token storage
+## 5. Fitur & Requirement Detail
 
-### 5.4 Playlist (opsional lanjutan, many-to-many dengan Song)
-- User bisa membuat playlist, menambah/menghapus lagu
-- Relasi many-to-many antara Playlist dan Song
+### 5.1 Auth
+- **Register**: nama, email (unique), password (hash bcrypt)
+- **Login**: return access token (JWT, 15 menit) + refresh token (JWT, 7 hari, disimpan di Redis agar bisa di-revoke)
+- **Refresh**: tukar refresh token valid → access token baru
+- **Logout**: hapus refresh token dari Redis (revoke)
+- **Forgot Password**: user submit email → sistem generate token reset (random string, disimpan di Redis dengan TTL 15 menit) → kirim email via SMTP berisi link reset
+- **Reset Password**: user submit token + password baru → validasi token di Redis → update password → hapus token dari Redis
 
-## 6. Non-Functional Requirements
+### 5.2 WebSocket (real-time)
+Skenario yang relevan untuk Spotify clone:
+- **"Now Playing" broadcast**: saat user memutar lagu, event dikirim ke WebSocket (berguna untuk fitur "lihat aktivitas teman" di masa depan)
+- **Live notification**: contoh sederhana, notifikasi saat lagu/album baru ditambahkan oleh artist yang di-follow (fitur follow tidak wajib diimplementasi penuh, tapi struktur event-nya disiapkan)
+- Minimal viable scope untuk portofolio: **1 WebSocket hub** yang broadcast event `song:playing` dan `song:created` ke semua client yang terkoneksi (broadcast sederhana dulu, bukan targeted per-user — itu bisa jadi enhancement lanjutan)
 
-- **Keamanan:** Password di-hash dengan bcrypt, JWT secret disimpan di `.env` (tidak pernah di-commit), refresh token revocable, rate limiting pada endpoint auth (khususnya login & reset password) menggunakan Redis.
-- **Konsistensi kode:** Semua fitur baru mengikuti pola multi-layer yang sudah ada (handler-service-repository-model), termasuk pola validasi (`go-playground/validator`) dan pola error response yang konsisten (`{"error": "..."}`).
-- **Dokumentasi:** Setiap endpoint baru didokumentasikan (minimal di README atau file API reference terpisah).
-- **Testing:** Ditambahkan bertahap setelah fitur-fitur inti (Auth, WebSocket) selesai — unit test untuk service layer minimal untuk business logic kritikal (validasi password, token generation/validation).
+### 5.3 Caching (Redis)
+- Cache **GET /api/artists** dan **GET /api/albums** (list) selama beberapa menit (TTL 5 menit) — data ini jarang berubah dibanding dibaca
+- Cache di-invalidate (delete key) setiap kali ada Create/Update/Delete pada entity terkait
+- Refresh token store (sudah ada di scope auth)
+- Reset password token store
 
-## 7. Out of Scope (untuk versi ini)
+### 5.4 Frontend
+- Halaman: Login, Register, Forgot Password, Reset Password, Home (list artist/album/song), Detail Artist, Detail Album, Player sederhana (mock, tidak perlu streaming audio sungguhan untuk MVP)
+- Validasi semua form pakai **Zod schema**, terintegrasi dengan komponen form (misal `react-hook-form` + `@hookform/resolvers/zod`, atau validasi manual on-submit — bebas dipilih)
+- Tailwind CSS murni — tidak pakai UI kit, styling manual untuk menunjukkan kemampuan CSS/utility-first design
+- Koneksi WebSocket untuk menampilkan event real-time (misal toast notification saat ada lagu baru)
 
-- Payment/subscription system
-- Audio transcoding/streaming chunked (asumsikan file audio sudah tersedia via URL/storage eksternal)
-- Multi-device sync playback yang kompleks
-- Admin dashboard terpisah
-- Mobile app (fokus web dulu)
+---
 
-## 8. Milestone / Urutan Pengerjaan yang Disarankan
+## 6. Data Model (ERD ringkas)
 
-1. **Auth lengkap** — Register, Login, Refresh, Logout, Middleware JWT
-2. **Reset Password via SMTP**
-3. **Redis Caching** pada endpoint read-heavy (Artist, Album)
-4. **WebSocket** — 1 use case realtime sederhana
-5. **Frontend setup** — React + Vite + TSX + Tailwind, integrasi Zod untuk semua form (register, login, reset password, create artist/song/album jika ada admin panel sederhana)
-6. **Playlist** (jika waktu memungkinkan)
-7. **Testing dasar** untuk service layer kritikal
+```
+User
+ - id, name, email (unique), password (hashed), created_at, updated_at
 
-## 9. Kriteria Sukses (Definition of Done)
+Artist
+ - id, name, bio, image_url, created_at, updated_at
 
-- Semua endpoint di atas berjalan dan sudah ditest manual (Postman/Thunder Client)
-- Tidak ada credential/secret yang ter-commit ke Git
-- Frontend bisa register, login, browse artist/album/song, dan menampilkan koneksi WebSocket aktif (indikator sederhana)
-- README project menjelaskan cara setup dari nol (docker compose, .env, migrasi)
-- Kode konsisten mengikuti arsitektur multi-layer yang sudah ditetapkan
+Album
+ - id, title, cover_url, release_date, artist_id (FK), created_at, updated_at
+
+Song
+ - id, title, duration, file_url, artist_id (FK), album_id (FK, nullable), created_at, updated_at
+
+Redis Keys
+ - refresh_token:{user_id} -> refresh token string, TTL 7 hari
+ - reset_token:{token} -> user_id, TTL 15 menit
+ - artists:all -> JSON list artist, TTL 5 menit
+ - albums:all -> JSON list album, TTL 5 menit
+```
+
+Relasi:
+- Artist 1—N Album
+- Artist 1—N Song
+- Album 1—N Song (opsional, song bisa tanpa album/"single")
+- User tidak berelasi langsung ke entity musik pada scope ini (Playlist ditunda ke fase berikutnya)
+
+---
+
+## 7. API Endpoints
+
+### Auth
+| Method | Endpoint | Auth | Deskripsi |
+|---|---|---|---|
+| POST | `/api/auth/register` | - | Daftar user baru |
+| POST | `/api/auth/login` | - | Login, return access+refresh token |
+| POST | `/api/auth/refresh` | - | Tukar refresh token → access token baru |
+| POST | `/api/auth/logout` | JWT | Revoke refresh token |
+| GET | `/api/auth/me` | JWT | Info user dari token |
+| POST | `/api/auth/forgot-password` | - | Kirim email reset password |
+| POST | `/api/auth/reset-password` | - | Set password baru dengan token |
+
+### Artist / Album / Song
+*(sudah ada, lihat kode existing — pertahankan pola yang sama)*
+
+### WebSocket
+| Endpoint | Deskripsi |
+|---|---|
+| `GET /ws` (upgrade) | Koneksi WebSocket, autentikasi via query param `?token=<access_token>` atau header saat handshake |
+
+---
+
+## 8. WebSocket Protocol
+
+**Format pesan (JSON), konsisten di semua event:**
+```json
+{
+  "event": "song:playing",
+  "data": { "song_id": 1, "title": "Monokrom", "user_id": 3 },
+  "timestamp": "2026-08-04T10:00:00Z"
+}
+```
+
+**Event yang didukung (MVP):**
+| Event | Arah | Deskripsi |
+|---|---|---|
+| `song:playing` | Client → Server → Broadcast | User memutar lagu, di-broadcast ke semua client terkoneksi |
+| `song:created` | Server → Broadcast | Otomatis dikirim saat ada Song baru dibuat via REST API |
+| `connection:ack` | Server → Client | Konfirmasi koneksi berhasil setelah autentikasi |
+
+**Autentikasi WebSocket:** validasi JWT access token saat handshake (sebelum upgrade koneksi). Jika token invalid/expired, tolak upgrade dengan HTTP 401 sebelum masuk ke protokol WebSocket.
+
+---
+
+## 9. Non-Functional Requirements
+
+- Semua password di-hash (bcrypt), tidak pernah return password di response (`json:"-"` pada struct)
+- Refresh token & reset token disimpan di Redis dengan TTL yang jelas, bukan di database permanen
+- Endpoint yang butuh login wajib pakai middleware JWT, bukan pengecekan manual per-handler
+- Response error konsisten: `{"error": "pesan"}`
+- Environment variable (`.env`) tidak pernah di-commit ke Git
+
+---
+
+## 10. Roadmap / Fase Pengerjaan
+
+1. **Fase 1 (selesai):** Setup infra + CRUD Artist/Song/Album
+2. **Fase 2 (selesai):** Auth lengkap (register, login, refresh, logout, middleware JWT)
+3. **Fase 3 (selesai):** Forgot/Reset password via SMTP
+4. **Fase 4 (selesai):** Redis caching di endpoint read-heavy
+5. **Fase 5 (selesai):** WebSocket hub + integrasi event `song:playing`, `song:created`
+6. **Fase 6 (sekarang):** Frontend setup (React + Vite + Tailwind v4 + Zod + Zustand) — halaman auth dulu, lalu listing artist/album/song, lalu integrasi WebSocket
+7. **Fase 7:** Docker full-stack demo (`Dockerfile` backend & frontend + `docker-compose.prod.yml`) — lihat `DOCKER.md`
+8. **Fase 8 (opsional):** Playlist (many-to-many User–Song)
+9. **Fase 9 (opsional):** Unit testing service layer
+
+---
+
+## 11. Catatan Desain (untuk dijelaskan saat interview)
+
+- Kenapa access token pendek + refresh token panjang: keamanan (kompromi token akses tidak bertahan lama) tanpa mengorbankan UX (user tidak perlu login ulang tiap 15 menit)
+- Kenapa refresh token disimpan di Redis, bukan hanya divalidasi via signature JWT: agar bisa **di-revoke** (logout paksa, misal saat user ganti password atau report device hilang) — JWT stateless murni tidak bisa di-revoke sebelum expired
+- Kenapa cache di-invalidate manual saat Create/Update/Delete, bukan TTL saja: mencegah client melihat data basi terlalu lama setelah perubahan
+- Kenapa WebSocket broadcast sederhana dulu (bukan targeted per-user/room): scope portofolio, cukup untuk menunjukkan pemahaman konsep; desain event JSON sudah dibuat agar mudah dikembangkan ke targeted messaging nanti

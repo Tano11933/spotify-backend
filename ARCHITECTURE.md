@@ -1,28 +1,10 @@
-# Arsitektur — Spotify Clone
+# ARCHITECTURE.md — Spotify Clone
 
-## 1. Arsitektur Backend (Go)
+Dokumen ini menjelaskan struktur folder dan pola kode yang harus diikuti saat menambah fitur baru (Auth, WebSocket, SMTP, Caching) agar konsisten dengan kode yang sudah ada.
 
-### 1.1 Prinsip
+---
 
-Multi-layer architecture, tiap layer punya tanggung jawab tunggal:
-
-```
-Request masuk
-     ↓
-[Middleware]   → auth check, rate limit, logging
-     ↓
-[Handler]      → parse request, validasi format (struct tag), format response
-     ↓
-[Service]      → business logic, orchestrasi antar repository, caching decision
-     ↓
-[Repository]   → query database (via GORM) / cache (via Redis)
-     ↓
-[Model]        → representasi struct tabel database
-```
-
-Aturan: Handler tidak boleh langsung memanggil Repository. Service tidak boleh tahu detail HTTP (Fiber context). Repository tidak boleh berisi business logic.
-
-### 1.2 Struktur Folder Final
+## 1. Backend — Struktur Folder Final (target)
 
 ```
 spotify-backend/
@@ -30,287 +12,317 @@ spotify-backend/
 │   └── api/
 │       └── main.go                  # entrypoint, wiring semua dependency
 ├── internal/
-│   ├── handler/
-│   │   ├── artist_handler.go
-│   │   ├── song_handler.go
-│   │   ├── album_handler.go
-│   │   ├── auth_handler.go
-│   │   ├── playlist_handler.go      # (opsional)
-│   │   └── ws_handler.go            # WebSocket handler
-│   ├── service/
+│   ├── handler/                     # terima HTTP request, panggil service
+│   │   ├── artist_handler.go        # (sudah ada)
+│   │   ├── song_handler.go          # (sudah ada)
+│   │   ├── album_handler.go         # (sudah ada)
+│   │   └── auth_handler.go          # register/login/refresh/logout/me + forgot/reset password
+│   ├── service/                     # business logic
 │   │   ├── artist_service.go
 │   │   ├── song_service.go
 │   │   ├── album_service.go
-│   │   ├── auth_service.go
-│   │   ├── playlist_service.go      # (opsional)
-│   │   └── mail_service.go          # SMTP sender
-│   ├── repository/
+│   │   └── auth_service.go          # login/register/token pair/logout + reset password
+│   │                                # (password logic digabung di sini karena berbagi
+│   │                                #  sentinel error & normalisasi email dengan login/register)
+│   ├── repository/                  # akses database (GORM)
 │   │   ├── artist_repository.go
 │   │   ├── song_repository.go
 │   │   ├── album_repository.go
-│   │   ├── user_repository.go
-│   │   └── playlist_repository.go   # (opsional)
-│   ├── model/
+│   │   └── user_repository.go
+│   ├── model/                       # struct = tabel database
 │   │   ├── artist.go
 │   │   ├── song.go
 │   │   ├── album.go
-│   │   ├── user.go
-│   │   └── playlist.go              # (opsional)
+│   │   └── user.go
 │   ├── middleware/
-│   │   ├── auth.go                  # JWT protected middleware
-│   │   └── rate_limit.go            # rate limiter berbasis Redis
+│   │   └── auth.go                  # JWT middleware
 │   ├── router/
-│   │   └── router.go
+│   │   └── router.go                # semua route didaftarkan di sini
 │   └── websocket/
-│       └── hub.go                   # connection manager / broadcaster
-├── pkg/
+│       └── hub.go                   # hub + client + event dalam satu file
+│                                    # (Client & Event masing-masing ~40 baris, memecahnya
+│                                    #  belum berbayar — split nanti kalau tumbuh)
+├── pkg/                              # reusable, tidak spesifik ke business logic
 │   ├── database/
 │   │   └── postgres.go
 │   ├── cache/
-│   │   └── redis.go
+│   │   └── redis.go                 # koneksi Redis + cache.Store (struct, di-inject via DI)
 │   ├── jwt/
 │   │   └── jwt.go
 │   ├── mailer/
-│   │   └── smtp.go                  # low-level SMTP client wrapper
+│   │   └── smtp.go                  # kirim email generik (dipakai auth_service utk reset password)
 │   └── validator/
 │       └── validator.go
 ├── .env
 ├── .env.example
 ├── .gitignore
-├── docker-compose.yml
 ├── go.mod
-└── go.sum
+├── go.sum
+└── docker-compose.yml
 ```
 
-### 1.3 Auth Flow (JWT + Redis)
+### Prinsip yang harus dipertahankan
+- **Handler** tidak boleh berisi query database atau logic bisnis — hanya parsing request, validasi format, panggil service, format response
+- **Service** tidak boleh tahu soal `fiber.Ctx` — service harus bisa dites tanpa HTTP sama sekali
+- **Repository** hanya berisi query, tidak ada validasi atau business rule
+- Semua dependency (db, redis, mailer) di-inject lewat constructor (`NewXxxService(...)`), bukan variabel global
 
-```
-Register:
-  POST /api/auth/register → hash password (bcrypt) → simpan ke Postgres
+---
 
-Login:
-  POST /api/auth/login → cek email+password → generate access token (JWT, 15m)
-                        → generate refresh token (JWT, 7d) → simpan refresh token di Redis
-                          key: refresh_token:{user_id}, value: token, TTL: 7 hari
-                        → return {access_token, refresh_token}
+## 2. Modul Baru — Detail Desain
 
-Akses endpoint terproteksi:
-  Request header: Authorization: Bearer {access_token}
-  → Middleware validasi signature + expiry JWT
-  → set c.Locals("userID", ...) untuk dipakai handler
+### 2.1 `pkg/mailer/smtp.go`
+Bertanggung jawab murni untuk mengirim email — tidak tahu soal "reset password", itu urusan `auth_service.go` (bagian reset password).
 
-Refresh:
-  POST /api/auth/refresh {refresh_token}
-  → validasi signature refresh token
-  → cek refresh token ini masih ada di Redis (belum di-revoke)
-  → generate access + refresh token baru (rotate refresh token)
+```go
+package mailer
 
-Logout:
-  POST /api/auth/logout (butuh access token valid)
-  → hapus refresh_token:{user_id} dari Redis
-```
+type Mailer struct {
+	host      string
+	port      string
+	username  string
+	password  string
+	fromEmail string
+	fromName  string
+}
 
-### 1.4 Reset Password Flow (SMTP)
+func NewMailer(host, port, username, password, fromEmail, fromName string) *Mailer
 
-```
-Step 1 — Request reset:
-  POST /api/auth/forgot-password {email}
-  → cek email exist
-  → generate random token (crypto/rand, bukan JWT — cukup string acak)
-  → simpan di Redis: key reset_token:{token}, value: user_id, TTL 15 menit
-  → kirim email via SMTP berisi link: https://frontend-url/reset-password?token={token}
-  → response sukses selalu sama meskipun email tidak ditemukan
-    (mencegah email enumeration attack)
-
-Step 2 — Submit reset:
-  POST /api/auth/reset-password {token, new_password}
-  → cek token exist di Redis → ambil user_id
-  → hash password baru → update ke Postgres
-  → hapus token dari Redis (single-use)
-  → (opsional) revoke semua refresh token user ini juga, agar sesi lama logout otomatis
+func (m *Mailer) Send(to, subject, body string) error
 ```
 
-**Rate limiting penting** untuk endpoint `forgot-password` — gunakan Redis untuk membatasi maksimal beberapa request per email/IP per jam, mencegah spam email.
+Menggunakan **go-mail** (mudah untuk HTML email dan header `From: Nama <alamat>`).
 
-### 1.5 Redis Caching Strategy
-
-Pola **cache-aside** (paling umum dan mirip `Cache::remember()` di Laravel):
-
+**Env yang dibutuhkan:**
 ```
-GET /api/artists:
-  1. Cek Redis key "artists:all"
-  2. Jika ada → return langsung dari cache
-  3. Jika tidak ada → query Postgres → simpan ke Redis (TTL 5 menit) → return
-
-POST/PUT/DELETE /api/artists:
-  → setelah operasi berhasil, hapus (invalidate) key "artists:all"
-    dan key spesifik seperti "artist:{id}" jika ada
-```
-
-Terapkan pola yang sama untuk `albums`. Untuk `songs`, caching opsional karena datanya lebih sering berubah (tergantung use case), fokuskan caching pada data yang read-heavy dan write-light.
-
-### 1.6 WebSocket Design (Minimal Viable)
-
-Use case: **broadcast status "now playing"** ke semua client yang connect (simulasi sederhana, tidak perlu room per user dulu di versi awal).
-
-```
-internal/websocket/hub.go:
-  - Hub menyimpan daftar koneksi aktif (map[*websocket.Conn]bool)
-  - method Register(conn), Unregister(conn), Broadcast(message)
-
-internal/handler/ws_handler.go:
-  - GET /ws (upgrade ke websocket)
-  - Saat client kirim pesan {"song_id": 5, "action": "play"}
-    → hub broadcast ke semua client lain: {"user": ..., "song_id": 5, "action": "play"}
-
-Opsional pengembangan lanjutan:
-  - Gunakan Redis Pub/Sub sebagai broker jika nanti backend di-scale ke multiple instance
-    (karena in-memory hub tidak akan sinkron antar instance)
-```
-
-Untuk versi awal, **in-memory hub cukup** — cukup untuk demo dan portofolio, dan bisa disebutkan di README sebagai "next improvement: Redis Pub/Sub untuk horizontal scaling".
-
-### 1.7 Environment Variables (`.env`)
-
-```
-# Database
-DB_HOST=localhost
-DB_PORT=5432
-DB_USER=spotify
-DB_PASSWORD=spotify123
-DB_NAME=spotify_db
-
-# Redis
-REDIS_HOST=localhost
-REDIS_PORT=6379
-
-# App
-APP_PORT=9000
-
-# JWT
-JWT_SECRET=
-JWT_REFRESH_SECRET=
-
-# SMTP (contoh pakai Mailtrap/Gmail App Password untuk development)
-SMTP_HOST=
-SMTP_PORT=
-SMTP_USERNAME=
-SMTP_PASSWORD=
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USERNAME=your_email@gmail.com
+SMTP_PASSWORD=app_password_bukan_password_biasa
 SMTP_FROM_EMAIL=noreply@spotifyclone.dev
 SMTP_FROM_NAME=Spotify Clone
+```
+Catatan: `SMTP_FROM_EMAIL` dan `SMTP_FROM_NAME` dipisah karena go-mail membutuhkan nama & alamat terpisah untuk menyusun header `From: Nama <alamat>`. Kalau pakai Gmail, wajib generate **App Password** (bukan password akun biasa), karena Google memblokir SMTP auth dengan password biasa untuk akun dengan 2FA aktif.
 
-# Frontend URL (untuk link reset password di email)
-FRONTEND_URL=http://localhost:5173
+### 2.2 `internal/websocket/hub.go`
+Pola standar Go untuk WebSocket hub (broadcast ke banyak client). Hub, Client, dan definisi Event semuanya dalam satu file ini (masing-masing kecil, ~40 baris — belum perlu dipecah):
+
+```go
+package websocket
+
+type Hub struct {
+	clients    map[*Client]bool
+	broadcast  chan []byte
+	register   chan *Client
+	unregister chan *Client
+}
+
+func NewHub() *Hub
+func (h *Hub) Run()  // jalan sebagai goroutine, loop selamanya
 ```
 
-## 2. Arsitektur Frontend (React + Vite + TSX)
+`Hub.Run()` dipanggil sekali di `main.go` sebagai goroutine (`go hub.Run()`), lalu setiap koneksi WebSocket baru didaftarkan ke hub ini.
 
-### 2.1 Struktur Folder
+### 2.3 `internal/middleware/auth.go`
+Sudah didesain di percakapan sebelumnya — pastikan middleware ini dipakai di:
+- Semua route yang butuh login (logout, me, create playlist nanti)
+- WebSocket upgrade handler (validasi token dari query param sebelum upgrade koneksi)
+
+### 2.4 Redis Cache — `pkg/cache/redis.go` (`cache.Store` struct + DI)
+Cache di-bungkus dalam struct `Store` yang di-inject ke service lewat constructor — konsisten dengan aturan "tidak ada variabel global, semua lewat constructor" di §1 (bukan package-level function):
+
+```go
+type Store struct {
+	rdb *redis.Client
+}
+
+func NewStore(rdb *redis.Client) *Store
+func (s *Store) Get(ctx context.Context, key string, dest interface{}) (bool, error)
+func (s *Store) Set(ctx context.Context, key string, value interface{}, ttl time.Duration) error
+func (s *Store) Invalidate(ctx context.Context, key string) error
+```
+
+Dipakai di `artist_service.go` / `album_service.go` untuk `GetAll`:
+```go
+func (s *ArtistService) GetAllArtists() ([]model.Artist, error) {
+    var cached []model.Artist
+    if found, _ := s.cache.Get(ctx, "artists:all", &cached); found {
+        return cached, nil
+    }
+    artists, err := s.repo.FindAll()
+    if err == nil {
+        s.cache.Set(ctx, "artists:all", artists, 5*time.Minute)
+    }
+    return artists, err
+}
+```
+Cache key: `artists:all`, `albums:all` (tanpa prefix `cache:` — redundan, karena Redis instance ini juga menyimpan token yang sudah punya prefix sendiri seperti `refresh_token:`, `reset_token:`). Invalidate cache ini di `CreateArtist`, `UpdateArtist`, `DeleteArtist` (dan analog untuk Album).
+
+### 2.5 CORS (wajib ditambahkan sebelum frontend mulai memanggil backend)
+Frontend (`localhost:5173` dev, `localhost:3000` Docker demo) beda origin dari backend (`localhost:9000`) — browser akan memblokir request tanpa konfigurasi CORS. Tambahkan middleware ini di `main.go` sebelum `router.SetupRoutes`:
+
+```go
+import "github.com/gofiber/fiber/v2/middleware/cors"
+
+app.Use(cors.New(cors.Config{
+	AllowOrigins:     "http://localhost:5173,http://localhost:3000",
+	AllowHeaders:     "Origin, Content-Type, Accept, Authorization",
+	AllowMethods:     "GET,POST,PUT,DELETE,OPTIONS",
+	AllowCredentials: true,
+}))
+```
+
+Install: `go get github.com/gofiber/fiber/v2/middleware/cors`
+
+---
 
 ```
 spotify-frontend/
 ├── src/
-│   ├── api/
-│   │   ├── axiosInstance.ts         # base axios + interceptor refresh token
-│   │   ├── auth.ts                  # fungsi call API auth
-│   │   ├── artist.ts
-│   │   ├── song.ts
-│   │   ├── album.ts
-│   │   └── websocket.ts             # koneksi WS
-│   ├── components/
-│   │   ├── ui/                      # button, input, card dasar (Tailwind only)
-│   │   └── layout/                  # navbar, sidebar, dll
-│   ├── features/
-│   │   ├── auth/
-│   │   │   ├── LoginForm.tsx
-│   │   │   ├── RegisterForm.tsx
-│   │   │   ├── ForgotPasswordForm.tsx
-│   │   │   └── schema.ts            # Zod schema untuk validasi form auth
-│   │   ├── artist/
-│   │   ├── album/
-│   │   └── song/
-│   ├── store/                       # state management (Zustand disarankan)
-│   │   ├── authStore.ts
-│   │   └── playerStore.ts           # state "now playing" untuk WebSocket
-│   ├── pages/
-│   ├── routes/
-│   │   └── ProtectedRoute.tsx       # wrapper cek auth sebelum render halaman
-│   ├── types/
-│   │   └── index.ts
+│   ├── main.tsx
 │   ├── App.tsx
-│   └── main.tsx
+│   ├── pages/
+│   │   ├── LoginPage.tsx
+│   │   ├── RegisterPage.tsx
+│   │   ├── ForgotPasswordPage.tsx
+│   │   ├── ResetPasswordPage.tsx
+│   │   ├── HomePage.tsx
+│   │   ├── ArtistDetailPage.tsx
+│   │   └── AlbumDetailPage.tsx
+│   ├── components/
+│   │   ├── ui/                      # button, input, card — styled Tailwind murni
+│   │   ├── SongCard.tsx
+│   │   ├── ArtistCard.tsx
+│   │   └── Toast.tsx                # untuk notifikasi WebSocket
+│   ├── schemas/                     # Zod schema, terpisah dari komponen
+│   │   ├── auth.schema.ts           # loginSchema, registerSchema, resetPasswordSchema
+│   │   └── ...
+│   ├── lib/
+│   │   ├── api.ts                   # wrapper axios, auto-attach JWT header + auto-refresh
+│   │   └── websocket.ts             # koneksi & listener WebSocket
+│   ├── store/                       # Zustand store
+│   │   ├── authStore.ts             # user, access token, refresh logic
+│   │   └── playerStore.ts           # (opsional) state lagu yang sedang diputar
+│   ├── types/
+│   │   └── index.ts                 # TypeScript types (Artist, Song, Album, User)
+│   └── index.css                    # @import "tailwindcss" + @theme (token warna/font)
 ├── .env
-├── tailwind.config.js
-├── vite.config.ts
+├── vite.config.ts                   # termasuk plugin @tailwindcss/vite
+├── tsconfig.json
+├── .oxlintrc.json                   # config Oxlint (bawaan template)
 └── package.json
 ```
 
-### 2.2 Validasi Form dengan Zod
+### Tech stack frontend (keputusan final)
+| Bagian | Pilihan | Catatan |
+|---|---|---|
+| Scaffold | `npm create vite@latest spotify-frontend -- --template react-compiler-ts` | React Compiler stable (v1.0, Okt 2025) — auto-memoization, kurangi `useMemo`/`useCallback` manual |
+| Linter | **Oxlint** (bawaan template, bukan ESLint) | 50-100x lebih cepat, zero-config, cukup untuk skala project ini |
+| Styling | Tailwind CSS **v4** via `@tailwindcss/vite` plugin | Config berbasis CSS (`@theme` di `index.css`), **bukan** `tailwind.config.js` seperti Tailwind v3 |
+| Font | Inter (`@fontsource/inter`) | Pengganti "Circular" (proprietary Spotify) |
+| Validasi form | Zod + `react-hook-form` + `@hookform/resolvers` | Schema di `src/schemas/`, terpisah dari komponen |
+| State management | **Zustand** | Dipilih karena boilerplate minim, cocok skala proyek ini dibanding Redux Toolkit |
+| HTTP client | Axios | Interceptor untuk auto-attach JWT & auto-refresh saat 401 |
+| Routing | React Router | Halaman: Login, Register, Forgot/Reset Password, Home, Artist/Album Detail |
 
-Contoh pola yang konsisten dipakai di semua form:
+**Penting soal Tailwind v4:** token warna & font (lihat `DESIGN.md`) didefinisikan lewat `@theme { --color-spotify-black: #121212; ... }` langsung di `src/index.css`, bukan di `tailwind.config.js`. Jangan generate `tailwind.config.js` kecuali benar-benar perlu override lanjutan yang tidak bisa lewat `@theme`.
 
-```ts
-// features/auth/schema.ts
-import { z } from "zod";
+### Prinsip Frontend
+- **Zod schema terpisah dari komponen** (`src/schemas/`) — reusable untuk validasi form maupun validasi response API bila perlu
+- **`lib/api.ts`** sentralisasi semua HTTP call — termasuk logic auto-refresh token saat dapat 401 (interceptor pattern)
+- **Auth state (Zustand `authStore`) terpisah dari UI state** — jangan campur dalam satu store besar
+- **Tailwind only** — hindari inline style, hindari CSS module terpisah kecuali benar-benar tidak bisa lewat utility class
+- **Ikuti `DESIGN.md`** untuk semua token warna, tipografi, dan pola komponen (card, button, layout 3-panel)
 
-export const loginSchema = z.object({
-  email: z.string().email("Email tidak valid"),
-  password: z.string().min(6, "Password minimal 6 karakter"),
-});
+---
 
-export type LoginInput = z.infer<typeof loginSchema>;
+## 4. Alur (Sequence) Penting
+
+### 4.1 Login → simpan token → auto-refresh
+```
+1. User submit form login → validasi Zod di client
+2. POST /api/auth/login → dapat { access_token, refresh_token }
+3. Simpan access_token di memory (store), refresh_token di httpOnly cookie
+   idealnya (atau localStorage jika scope portofolio, dengan catatan risiko XSS)
+4. Setiap request API, attach header Authorization: Bearer <access_token>
+5. Jika response 401 (access token expired):
+   a. Panggil POST /api/auth/refresh dengan refresh_token
+   b. Dapat access_token baru, ulangi request yang gagal tadi
+   c. Jika refresh juga gagal → redirect ke halaman login
 ```
 
-Digunakan bersama `react-hook-form` (disarankan, meskipun state management bebas — untuk form spesifik, `react-hook-form` + `@hookform/resolvers/zod` adalah kombinasi paling umum dan ringan) untuk validasi real-time di sisi client, selaras dengan validasi `go-playground/validator` di backend (validasi dobel: client untuk UX, server untuk keamanan).
-
-### 2.3 State Management
-
-Karena dibebaskan, rekomendasi: **Zustand** — alasan:
-- Setup minimal (tidak perlu provider wrapping berlapis seperti Redux)
-- Cocok untuk scope menengah (auth state, player state, playlist state)
-- Sintaks sederhana, mudah dipelajari untuk yang baru pertama kali pakai state management library
-
-Alternatif: Context API bawaan React (jika ingin zero-dependency), atau Redux Toolkit (jika ingin exposure ke pola yang lebih sering dipakai di perusahaan besar).
-
-### 2.4 Styling — Tailwind Only
-
-- Tidak menggunakan component library (shadcn/ui, MUI, Chakra, dll)
-- Semua komponen UI dasar (Button, Input, Card, Modal) dibuat manual di `components/ui/` menggunakan utility classes Tailwind
-- Gunakan `tailwind.config.js` untuk mendefinisikan design tokens (warna, spacing) agar konsisten — rujuk ke skill `frontend-design` untuk arahan estetika yang tidak generik
-
-### 2.5 Koneksi WebSocket dari Frontend
-
-```ts
-// api/websocket.ts
-const ws = new WebSocket(`ws://localhost:9000/ws?token=${accessToken}`);
-
-ws.onmessage = (event) => {
-  const data = JSON.parse(event.data);
-  // update playerStore (Zustand) berdasarkan broadcast "now playing"
-};
+### 4.2 Forgot Password → Reset Password
+```
+1. User submit email di ForgotPasswordPage
+2. POST /api/auth/forgot-password { email }
+3. Backend: generate random token, simpan di Redis (key: reset_token:{token}, value: user_id, TTL 15 menit)
+4. Backend: kirim email via SMTP berisi link, misal:
+   https://spotifyclone.dev/reset-password?token=abc123
+5. User klik link → buka ResetPasswordPage, ambil token dari query param
+6. User submit password baru → POST /api/auth/reset-password { token, new_password }
+7. Backend: validasi token di Redis, ambil user_id, update password (hash baru), hapus token dari Redis
 ```
 
-### 2.6 Axios Interceptor — Auto Refresh Token
-
-Pola standar: jika request gagal karena 401 (access token expired), otomatis panggil `/api/auth/refresh` menggunakan refresh token tersimpan, lalu retry request asli. Ini penting untuk UX yang mulus tanpa user harus login ulang setiap 15 menit.
-
-## 3. Diagram Relasi Database (ERD Ringkas)
-
+### 4.3 WebSocket connect + event
 ```
-Artist (1) ──< (N) Album
-Artist (1) ──< (N) Song
-Album  (1) ──< (N) Song  [Song.AlbumID nullable]
-User   (1) ──< (N) Playlist        [opsional lanjutan]
-Playlist (N) ──< >── (N) Song      [many-to-many, opsional lanjutan]
+1. Frontend connect: new WebSocket(`ws://localhost:9000/ws?token=${accessToken}`)
+2. Backend: validasi token sebelum upgrade koneksi HTTP → WebSocket
+3. Jika valid: koneksi didaftarkan ke Hub, kirim event connection:ack
+4. Saat ada Song baru dibuat (REST POST /api/songs berhasil):
+   → SongService memanggil hub.Broadcast(event "song:created", data song)
+   → Semua client terkoneksi menerima event ini secara real-time
+5. Frontend: tampilkan toast notification saat menerima event song:created
 ```
 
-## 4. Urutan Implementasi Teknis (untuk Claude Code)
+---
 
-1. Lengkapi Auth Service (Register, Login, Refresh, Logout) — jika belum selesai dari sesi sebelumnya
-2. Tambah Reset Password (SMTP + Redis token)
-3. Tambah Redis caching di Artist & Album (read + invalidation)
-4. Tambah WebSocket hub + endpoint `/ws`
-5. Setup project frontend (Vite + React + TS + Tailwind, tanpa component library)
-6. Implementasi halaman Auth (Register/Login/Forgot Password) dengan Zod + react-hook-form
-7. Implementasi halaman list Artist/Album/Song (consume API yang sudah ada)
-8. Integrasi WebSocket sederhana di frontend (indikator "now playing")
+## 5. Docker — Development vs Full-Stack Demo
+
+Dua mode terpisah, jangan dicampur:
+
+**Mode Development (harian):** `docker-compose.yml` di root `spotify-backend` hanya berisi Postgres + Redis. Backend jalan manual (`go run`), frontend jalan manual (`npm run dev`) — biar hot-reload cepat.
+
+**Mode Full-Stack Demo (showcase ke recruiter):** `Dockerfile` multi-stage di `spotify-backend` dan `spotify-frontend`, plus `docker-compose.prod.yml` yang menjalankan seluruh stack (Postgres, Redis, Backend, Frontend via Nginx) dengan satu command:
+```
+docker compose -f docker-compose.prod.yml up --build
+```
+Detail lengkap `Dockerfile` dan `docker-compose.prod.yml` — lihat `DOCKER.md`. **Urutan pengerjaan: setup Docker mode ini paling akhir**, setelah backend dan frontend sudah berjalan normal secara manual.
+
+---
+
+## 6. Checklist Implementasi (urutan disarankan)
+
+### Backend (SELESAI ✅ — belum di-commit oleh Gabriel, akan di-commit manual per-fitur)
+- [x] Tambah `internal/model/user.go`
+- [x] Tambah `pkg/jwt/jwt.go`
+- [x] Tambah `internal/repository/user_repository.go`
+- [x] Tambah `internal/service/auth_service.go` (register, login, refresh, logout, reset password — password logic digabung di sini)
+- [x] Tambah `internal/middleware/auth.go`
+- [x] Tambah `internal/handler/auth_handler.go` (termasuk forgot/reset password)
+- [x] Daftarkan route auth di `router.go`, update `main.go` (wiring + AutoMigrate User)
+- [x] Tambah `pkg/mailer/smtp.go` (pakai go-mail, env `SMTP_FROM_EMAIL` + `SMTP_FROM_NAME`)
+- [x] Reset password flow via SMTP (di dalam auth_service/auth_handler)
+- [x] `pkg/cache/redis.go` dengan `cache.Store` struct (di-inject via DI)
+- [x] Terapkan caching di `ArtistService.GetAllArtists` dan `AlbumService.GetAllAlbums` (key `artists:all` / `albums:all`)
+- [x] Tambah `internal/websocket/hub.go` (hub + client + event dalam satu file)
+- [x] Tambah endpoint `GET /ws` di router dengan middleware auth khusus WebSocket
+- [x] Integrasikan broadcast `song:created` di `SongService.CreateSong`
+- [ ] Test ulang semua endpoint (Auth, forgot/reset password, cache, WebSocket) di Postman/Thunder Client sebelum commit
+- [ ] Commit per-fitur secara manual (mis. `feat(auth): ...`, `feat(smtp): ...`, `feat(cache): ...`, `feat(websocket): ...`)
+
+### Frontend (setelah backend selesai & di-commit manual oleh Gabriel)
+- [x] Scaffold: `npm create vite@latest spotify-frontend -- --template react-compiler-ts`
+- [ ] Install Tailwind v4 (`@tailwindcss/vite`), konfigurasi `@theme` di `index.css` sesuai `DESIGN.md`
+- [ ] Install Inter font, Zod, React Router, Axios, Zustand, react-hook-form + resolver
+- [ ] Bikin struktur folder sesuai §3
+- [ ] `src/lib/api.ts` — axios instance + interceptor JWT + auto-refresh
+- [ ] Halaman Auth: Login, Register, Forgot/Reset Password (pakai schema Zod dari `src/schemas/auth.schema.ts`)
+- [ ] Layout utama: sidebar + top bar + now-playing bar (sesuai `DESIGN.md` §3)
+- [ ] Halaman Home: list Artist/Album/Song (card grid, sesuai `DESIGN.md` §4)
+- [ ] Integrasi WebSocket: `src/lib/websocket.ts` + toast notification saat event `song:created`
+
+### Deployment (paling akhir)
+- [ ] `Dockerfile` backend (multi-stage: golang builder → alpine runtime)
+- [ ] `Dockerfile` frontend (multi-stage: node builder → nginx runtime) + `nginx.conf`
+- [ ] `docker-compose.prod.yml` — full stack, env var lewat `.env` terpisah
+- [ ] Push ke GitHub (masing-masing repo, commit per-fitur — dilakukan manual oleh Gabriel, bukan otomatis oleh Claude Code), update README dengan diagram arsitektur
