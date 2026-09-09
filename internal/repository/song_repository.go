@@ -53,12 +53,20 @@ func (r *SongRepository) Update(ctx context.Context, song *model.Song) error {
 }
 
 func (r *SongRepository) Delete(ctx context.Context, id uint) error {
-	result := r.db.WithContext(ctx).Delete(&model.Song{}, id)
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Hapus relasi lebih dulu karena playlist_songs memiliki foreign key ke
+		// songs. Playlist dan lagu lain tetap dipertahankan.
+		if err := tx.Table("playlist_songs").Where("song_id = ?", id).Delete(nil).Error; err != nil {
+			return err
+		}
+
+		result := tx.Delete(&model.Song{}, id)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
 }
