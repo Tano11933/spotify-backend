@@ -8,8 +8,8 @@ type Album struct {
 	CoverURL    string    `json:"cover_url" validate:"omitempty,url"`
 	ReleaseDate time.Time `json:"release_date" validate:"required"`
 
-	ArtistID uint   `json:"artist_id" gorm:"not null" validate:"required"`
-	Artist   Artist `json:"artist,omitempty" gorm:"foreignKey:ArtistID" validate:"-"`
+	ArtistID uint    `json:"artist_id" gorm:"not null" validate:"required"`
+	Artist   *Artist `json:"artist,omitempty" gorm:"foreignKey:ArtistID" validate:"-"`
 
 	Songs []Song `json:"songs,omitempty" gorm:"foreignKey:AlbumID" validate:"-"`
 

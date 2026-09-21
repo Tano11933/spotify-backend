@@ -8,8 +8,8 @@ type Song struct {
 	Duration int    `json:"duration" validate:"required,min=1"`
 	FileURL  string `json:"file_url" validate:"omitempty,url"`
 
-	ArtistID uint   `json:"artist_id" gorm:"not null" validate:"required"`
-	Artist   Artist `json:"artist,omitempty" gorm:"foreignKey:ArtistID" validate:"-"`
+	ArtistID uint    `json:"artist_id" gorm:"not null" validate:"required"`
+	Artist   *Artist `json:"artist,omitempty" gorm:"foreignKey:ArtistID" validate:"-"`
 
 	AlbumID *uint  `json:"album_id" validate:"omitempty"`
 	Album   *Album `json:"album,omitempty" gorm:"foreignKey:AlbumID" validate:"-"`
