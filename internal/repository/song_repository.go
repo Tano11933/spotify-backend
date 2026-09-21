@@ -28,13 +28,13 @@ func (r *SongRepository) Create(ctx context.Context, song *model.Song) error {
 
 func (r *SongRepository) FindAll(ctx context.Context) ([]model.Song, error) {
 	var songs []model.Song
-	err := r.db.WithContext(ctx).Preload("Artist").Find(&songs).Error
+	err := r.db.WithContext(ctx).Preload("Artist").Preload("Album").Find(&songs).Error
 	return songs, err
 }
 
 func (r *SongRepository) FindByID(ctx context.Context, id uint) (*model.Song, error) {
 	var song model.Song
-	if err := r.db.WithContext(ctx).Preload("Artist").First(&song, id).Error; err != nil {
+	if err := r.db.WithContext(ctx).Preload("Artist").Preload("Album").First(&song, id).Error; err != nil {
 		return nil, translateNotFound(err)
 	}
 	return &song, nil
@@ -42,7 +42,11 @@ func (r *SongRepository) FindByID(ctx context.Context, id uint) (*model.Song, er
 
 func (r *SongRepository) FindByArtistID(ctx context.Context, artistID uint) ([]model.Song, error) {
 	var songs []model.Song
-	err := r.db.WithContext(ctx).Where("artist_id = ?", artistID).Find(&songs).Error
+	err := r.db.WithContext(ctx).
+		Preload("Artist").
+		Preload("Album").
+		Where("artist_id = ?", artistID).
+		Find(&songs).Error
 	return songs, err
 }
 

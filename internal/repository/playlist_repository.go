@@ -28,6 +28,7 @@ func (r *PlaylistRepository) FindByID(ctx context.Context, id uint) (*model.Play
 	var playlist model.Playlist
 	err := r.db.WithContext(ctx).
 		Preload("Songs.Artist").
+		Preload("Songs.Album").
 		First(&playlist, id).Error
 	if err != nil {
 		return nil, translateNotFound(err)
@@ -39,6 +40,7 @@ func (r *PlaylistRepository) FindByUserID(ctx context.Context, userID uuid.UUID)
 	var playlists []model.Playlist
 	err := r.db.WithContext(ctx).
 		Preload("Songs.Artist").
+		Preload("Songs.Album").
 		Where("user_id = ?", userID).
 		Order("created_at DESC").
 		Find(&playlists).Error
@@ -48,7 +50,9 @@ func (r *PlaylistRepository) FindByUserID(ctx context.Context, userID uuid.UUID)
 func (r *PlaylistRepository) FindPublic(ctx context.Context) ([]model.Playlist, error) {
 	var playlists []model.Playlist
 	err := r.db.WithContext(ctx).
+		Preload("User").
 		Preload("Songs.Artist").
+		Preload("Songs.Album").
 		Where("is_public = ?", true).
 		Order("created_at DESC").
 		Find(&playlists).Error

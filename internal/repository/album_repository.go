@@ -39,6 +39,7 @@ func (r *AlbumRepository) FindByID(ctx context.Context, id uint) (*model.Album, 
 	err := r.db.WithContext(ctx).
 		Preload("Artist").
 		Preload("Songs").
+		Preload("Songs.Artist").
 		First(&album, id).Error
 	if err != nil {
 		return nil, translateNotFound(err)
@@ -65,4 +66,16 @@ func (r *AlbumRepository) Delete(ctx context.Context, id uint) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// CountSongs menghitung lagu yang masih menunjuk ke album ini. Dipakai service
+// untuk menolak delete dengan pesan jelas, alih-alih membiarkan Postgres
+// melempar error foreign key yang berakhir menjadi 500.
+func (r *AlbumRepository) CountSongs(ctx context.Context, id uint) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).
+		Model(&model.Song{}).
+		Where("album_id = ?", id).
+		Count(&count).Error
+	return count, err
 }

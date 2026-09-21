@@ -48,3 +48,36 @@ func (r *ArtistRepository) Delete(ctx context.Context, id uint) error {
 	}
 	return nil
 }
+
+// CountDependents menghitung album dan lagu yang masih menunjuk ke artist ini.
+// Dipakai service untuk menolak delete dengan pesan jelas, alih-alih
+// membiarkan Postgres melempar error foreign key yang berakhir menjadi 500.
+func (r *ArtistRepository) CountDependents(ctx context.Context, id uint) (albums, songs int64, err error) {
+	if err = r.db.WithContext(ctx).
+		Model(&model.Album{}).
+		Where("artist_id = ?", id).
+		Count(&albums).Error; err != nil {
+		return 0, 0, err
+	}
+
+	if err = r.db.WithContext(ctx).
+		Model(&model.Song{}).
+		Where("artist_id = ?", id).
+		Count(&songs).Error; err != nil {
+		return 0, 0, err
+	}
+
+	return albums, songs, nil
+}
+
+// FindAlbumIDsByArtist mengembalikan ID album milik artist. Album meng-embed
+// data artist (Preload "Artist"), jadi cache album:<id> ikut basi kalau artist
+// berubah — service memakai daftar ini untuk membersihkannya.
+func (r *ArtistRepository) FindAlbumIDsByArtist(ctx context.Context, id uint) ([]uint, error) {
+	var ids []uint
+	err := r.db.WithContext(ctx).
+		Model(&model.Album{}).
+		Where("artist_id = ?", id).
+		Pluck("id", &ids).Error
+	return ids, err
+}
