@@ -8,6 +8,8 @@ import (
 
 	"spotify-backend/internal/model"
 	"spotify-backend/internal/service"
+	"spotify-backend/pkg/pagination"
+	"spotify-backend/pkg/response"
 	"spotify-backend/pkg/validator"
 )
 
@@ -22,7 +24,7 @@ func NewSongHandler(service *service.SongService) *SongHandler {
 func (h *SongHandler) Create(c *fiber.Ctx) error {
 	var song model.Song
 	if err := c.BodyParser(&song); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
+		return response.BadRequest(c, "invalid request body")
 	}
 
 	// Sanitasi mass assignment — lihat catatan di album_handler.go.
@@ -33,7 +35,7 @@ func (h *SongHandler) Create(c *fiber.Ctx) error {
 	song.UpdatedAt = time.Time{}
 
 	if err := validator.ValidateStruct(song); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		return response.Validation(c, err)
 	}
 
 	if err := h.service.CreateSong(c.UserContext(), &song); err != nil {
@@ -44,17 +46,22 @@ func (h *SongHandler) Create(c *fiber.Ctx) error {
 }
 
 func (h *SongHandler) GetAll(c *fiber.Ctx) error {
-	songs, err := h.service.GetAllSongs(c.UserContext())
+	params, err := pagination.Parse(c.Query("limit"), c.Query("offset"))
+	if err != nil {
+		return response.BadRequest(c, err.Error())
+	}
+
+	page, err := h.service.GetAllSongs(c.UserContext(), params)
 	if err != nil {
 		return respondError(c, "song", err)
 	}
-	return c.JSON(songs)
+	return c.JSON(page)
 }
 
 func (h *SongHandler) GetByID(c *fiber.Ctx) error {
 	id, err := parseUintParam(c, "id")
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
+		return response.BadRequest(c, "invalid id")
 	}
 
 	song, err := h.service.GetSongByID(c.UserContext(), id)
@@ -67,23 +74,28 @@ func (h *SongHandler) GetByID(c *fiber.Ctx) error {
 func (h *SongHandler) GetByArtist(c *fiber.Ctx) error {
 	artistID, err := parseUintParam(c, "artistId")
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid artist id"})
+		return response.BadRequest(c, "invalid artist id")
 	}
 
-	songs, err := h.service.GetSongsByArtist(c.UserContext(), artistID)
+	params, err := pagination.Parse(c.Query("limit"), c.Query("offset"))
+	if err != nil {
+		return response.BadRequest(c, err.Error())
+	}
+
+	page, err := h.service.GetSongsByArtist(c.UserContext(), artistID, params)
 	if err != nil {
 		if errors.Is(err, service.ErrArtistNotFound) {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": err.Error()})
+			return response.NotFound(c, err.Error())
 		}
 		return respondError(c, "song", err)
 	}
-	return c.JSON(songs)
+	return c.JSON(page)
 }
 
 func (h *SongHandler) Update(c *fiber.Ctx) error {
 	id, err := parseUintParam(c, "id")
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
+		return response.BadRequest(c, "invalid id")
 	}
 
 	song, err := h.service.GetSongByID(c.UserContext(), id)
@@ -96,13 +108,13 @@ func (h *SongHandler) Update(c *fiber.Ctx) error {
 	createdAt := song.CreatedAt
 
 	if err := c.BodyParser(song); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
+		return response.BadRequest(c, "invalid request body")
 	}
 	song.ID = id
 	song.CreatedAt = createdAt
 
 	if err := validator.ValidateStruct(song); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		return response.Validation(c, err)
 	}
 
 	if err := h.service.UpdateSong(c.UserContext(), song); err != nil {
@@ -115,7 +127,7 @@ func (h *SongHandler) Update(c *fiber.Ctx) error {
 func (h *SongHandler) Delete(c *fiber.Ctx) error {
 	id, err := parseUintParam(c, "id")
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
+		return response.BadRequest(c, "invalid id")
 	}
 
 	if err := h.service.DeleteSong(c.UserContext(), id); err != nil {

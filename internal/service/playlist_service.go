@@ -10,6 +10,7 @@ import (
 
 	"spotify-backend/internal/model"
 	"spotify-backend/internal/repository"
+	"spotify-backend/pkg/pagination"
 )
 
 var (
@@ -50,12 +51,20 @@ func (s *PlaylistService) Create(
 	return playlist, nil
 }
 
-func (s *PlaylistService) GetOwned(ctx context.Context, userID uuid.UUID) ([]model.Playlist, error) {
-	return s.repo.FindByUserID(ctx, userID)
+func (s *PlaylistService) GetOwned(ctx context.Context, userID uuid.UUID, params pagination.Params) (pagination.Page[model.Playlist], error) {
+	playlists, total, err := s.repo.FindPageByUserID(ctx, userID, params.Limit, params.Offset)
+	if err != nil {
+		return pagination.Page[model.Playlist]{}, err
+	}
+	return pagination.NewPage(playlists, total, params), nil
 }
 
-func (s *PlaylistService) GetPublic(ctx context.Context) ([]model.Playlist, error) {
-	return s.repo.FindPublic(ctx)
+func (s *PlaylistService) GetPublic(ctx context.Context, params pagination.Params) (pagination.Page[model.Playlist], error) {
+	playlists, total, err := s.repo.FindPagePublic(ctx, params.Limit, params.Offset)
+	if err != nil {
+		return pagination.Page[model.Playlist]{}, err
+	}
+	return pagination.NewPage(playlists, total, params), nil
 }
 
 func (s *PlaylistService) GetByID(

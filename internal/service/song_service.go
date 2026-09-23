@@ -7,6 +7,7 @@ import (
 	"spotify-backend/internal/model"
 	"spotify-backend/internal/repository"
 	"spotify-backend/pkg/cache"
+	"spotify-backend/pkg/pagination"
 )
 
 var ErrSongNotFound = errors.New("song not found")
@@ -58,8 +59,12 @@ func (s *SongService) CreateSong(ctx context.Context, song *model.Song) error {
 	return nil
 }
 
-func (s *SongService) GetAllSongs(ctx context.Context) ([]model.Song, error) {
-	return s.repo.FindAll(ctx)
+func (s *SongService) GetAllSongs(ctx context.Context, params pagination.Params) (pagination.Page[model.Song], error) {
+	songs, total, err := s.repo.FindPage(ctx, params.Limit, params.Offset)
+	if err != nil {
+		return pagination.Page[model.Song]{}, err
+	}
+	return pagination.NewPage(songs, total, params), nil
 }
 
 func (s *SongService) GetSongByID(ctx context.Context, id uint) (*model.Song, error) {
@@ -73,11 +78,16 @@ func (s *SongService) GetSongByID(ctx context.Context, id uint) (*model.Song, er
 	return song, nil
 }
 
-func (s *SongService) GetSongsByArtist(ctx context.Context, artistID uint) ([]model.Song, error) {
+func (s *SongService) GetSongsByArtist(ctx context.Context, artistID uint, params pagination.Params) (pagination.Page[model.Song], error) {
 	if err := s.ensureArtistExists(ctx, artistID); err != nil {
-		return nil, err
+		return pagination.Page[model.Song]{}, err
 	}
-	return s.repo.FindByArtistID(ctx, artistID)
+
+	songs, total, err := s.repo.FindPageByArtistID(ctx, artistID, params.Limit, params.Offset)
+	if err != nil {
+		return pagination.Page[model.Song]{}, err
+	}
+	return pagination.NewPage(songs, total, params), nil
 }
 
 func (s *SongService) UpdateSong(ctx context.Context, song *model.Song) error {

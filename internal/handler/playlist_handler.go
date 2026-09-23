@@ -9,6 +9,8 @@ import (
 	"spotify-backend/internal/middleware"
 	"spotify-backend/internal/model"
 	"spotify-backend/internal/service"
+	"spotify-backend/pkg/pagination"
+	"spotify-backend/pkg/response"
 	"spotify-backend/pkg/validator"
 )
 
@@ -23,16 +25,16 @@ func NewPlaylistHandler(service *service.PlaylistService) *PlaylistHandler {
 func (h *PlaylistHandler) Create(c *fiber.Ctx) error {
 	userID, ok := middleware.UserIDFromContext(c)
 	if !ok {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
+		return response.Unauthorized(c, "unauthorized")
 	}
 
 	var req model.CreatePlaylistRequest
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
+		return response.BadRequest(c, "invalid request body")
 	}
 
 	if err := validator.ValidateStruct(req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		return response.Validation(c, err)
 	}
 
 	playlist, err := h.service.Create(c.UserContext(), userID, req)
@@ -47,34 +49,44 @@ func (h *PlaylistHandler) Create(c *fiber.Ctx) error {
 func (h *PlaylistHandler) GetMine(c *fiber.Ctx) error {
 	userID, ok := middleware.UserIDFromContext(c)
 	if !ok {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
+		return response.Unauthorized(c, "unauthorized")
 	}
 
-	playlists, err := h.service.GetOwned(c.UserContext(), userID)
+	params, err := pagination.Parse(c.Query("limit"), c.Query("offset"))
+	if err != nil {
+		return response.BadRequest(c, err.Error())
+	}
+
+	page, err := h.service.GetOwned(c.UserContext(), userID, params)
 	if err != nil {
 		return playlistError(c, err)
 	}
-	return c.JSON(playlists)
+	return c.JSON(page)
 }
 
-// GetPublic mengembalikan semua playlist yang ditandai publik.
+// GetPublic mengembalikan halaman playlist yang ditandai publik.
 func (h *PlaylistHandler) GetPublic(c *fiber.Ctx) error {
-	playlists, err := h.service.GetPublic(c.UserContext())
+	params, err := pagination.Parse(c.Query("limit"), c.Query("offset"))
+	if err != nil {
+		return response.BadRequest(c, err.Error())
+	}
+
+	page, err := h.service.GetPublic(c.UserContext(), params)
 	if err != nil {
 		return playlistError(c, err)
 	}
-	return c.JSON(playlists)
+	return c.JSON(page)
 }
 
 func (h *PlaylistHandler) GetByID(c *fiber.Ctx) error {
 	userID, ok := middleware.UserIDFromContext(c)
 	if !ok {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
+		return response.Unauthorized(c, "unauthorized")
 	}
 
 	id, err := parseUintParam(c, "id")
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
+		return response.BadRequest(c, "invalid id")
 	}
 
 	playlist, err := h.service.GetByID(c.UserContext(), id, userID)
@@ -87,21 +99,21 @@ func (h *PlaylistHandler) GetByID(c *fiber.Ctx) error {
 func (h *PlaylistHandler) Update(c *fiber.Ctx) error {
 	userID, ok := middleware.UserIDFromContext(c)
 	if !ok {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
+		return response.Unauthorized(c, "unauthorized")
 	}
 
 	id, err := parseUintParam(c, "id")
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
+		return response.BadRequest(c, "invalid id")
 	}
 
 	var req model.UpdatePlaylistRequest
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
+		return response.BadRequest(c, "invalid request body")
 	}
 
 	if err := validator.ValidateStruct(req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		return response.Validation(c, err)
 	}
 
 	playlist, err := h.service.Update(c.UserContext(), id, userID, req)
@@ -114,12 +126,12 @@ func (h *PlaylistHandler) Update(c *fiber.Ctx) error {
 func (h *PlaylistHandler) Delete(c *fiber.Ctx) error {
 	userID, ok := middleware.UserIDFromContext(c)
 	if !ok {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
+		return response.Unauthorized(c, "unauthorized")
 	}
 
 	id, err := parseUintParam(c, "id")
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
+		return response.BadRequest(c, "invalid id")
 	}
 
 	if err := h.service.Delete(c.UserContext(), id, userID); err != nil {
@@ -131,21 +143,21 @@ func (h *PlaylistHandler) Delete(c *fiber.Ctx) error {
 func (h *PlaylistHandler) AddSong(c *fiber.Ctx) error {
 	userID, ok := middleware.UserIDFromContext(c)
 	if !ok {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
+		return response.Unauthorized(c, "unauthorized")
 	}
 
 	id, err := parseUintParam(c, "id")
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
+		return response.BadRequest(c, "invalid id")
 	}
 
 	var req model.AddSongRequest
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
+		return response.BadRequest(c, "invalid request body")
 	}
 
 	if err := validator.ValidateStruct(req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		return response.Validation(c, err)
 	}
 
 	if err := h.service.AddSong(c.UserContext(), id, userID, req.SongID); err != nil {
@@ -157,17 +169,17 @@ func (h *PlaylistHandler) AddSong(c *fiber.Ctx) error {
 func (h *PlaylistHandler) RemoveSong(c *fiber.Ctx) error {
 	userID, ok := middleware.UserIDFromContext(c)
 	if !ok {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "unauthorized"})
+		return response.Unauthorized(c, "unauthorized")
 	}
 
 	id, err := parseUintParam(c, "id")
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
+		return response.BadRequest(c, "invalid id")
 	}
 
 	songID, err := parseUintParam(c, "songId")
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid song id"})
+		return response.BadRequest(c, "invalid song id")
 	}
 
 	if err := h.service.RemoveSong(c.UserContext(), id, userID, songID); err != nil {
@@ -181,17 +193,16 @@ func playlistError(c *fiber.Ctx, err error) error {
 	case errors.Is(err, service.ErrPlaylistNotFound),
 		errors.Is(err, service.ErrSongNotFound),
 		errors.Is(err, service.ErrSongNotInPlaylist):
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": err.Error()})
+		return response.NotFound(c, err.Error())
 
 	case errors.Is(err, service.ErrPlaylistForbidden):
-		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": err.Error()})
+		return response.Forbidden(c, err.Error())
 
 	case errors.Is(err, service.ErrSongAlreadyInPlaylist):
-		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
+		return response.Conflict(c, err.Error())
 
 	default:
 		log.Printf("playlist handler error on %s %s: %v", c.Method(), c.Path(), err)
-		return c.Status(fiber.StatusInternalServerError).
-			JSON(fiber.Map{"error": "internal server error"})
+		return response.Internal(c)
 	}
 }

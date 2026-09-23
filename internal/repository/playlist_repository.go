@@ -36,27 +36,49 @@ func (r *PlaylistRepository) FindByID(ctx context.Context, id uint) (*model.Play
 	return &playlist, nil
 }
 
-func (r *PlaylistRepository) FindByUserID(ctx context.Context, userID uuid.UUID) ([]model.Playlist, error) {
+func (r *PlaylistRepository) FindPageByUserID(ctx context.Context, userID uuid.UUID, limit, offset int) ([]model.Playlist, int64, error) {
 	var playlists []model.Playlist
+	var total int64
+
+	if err := r.db.WithContext(ctx).
+		Model(&model.Playlist{}).
+		Where("user_id = ?", userID).
+		Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
 	err := r.db.WithContext(ctx).
 		Preload("Songs.Artist").
 		Preload("Songs.Album").
 		Where("user_id = ?", userID).
 		Order("created_at DESC").
+		Limit(limit).
+		Offset(offset).
 		Find(&playlists).Error
-	return playlists, err
+	return playlists, total, err
 }
 
-func (r *PlaylistRepository) FindPublic(ctx context.Context) ([]model.Playlist, error) {
+func (r *PlaylistRepository) FindPagePublic(ctx context.Context, limit, offset int) ([]model.Playlist, int64, error) {
 	var playlists []model.Playlist
+	var total int64
+
+	if err := r.db.WithContext(ctx).
+		Model(&model.Playlist{}).
+		Where("is_public = ?", true).
+		Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
 	err := r.db.WithContext(ctx).
 		Preload("User").
 		Preload("Songs.Artist").
 		Preload("Songs.Album").
 		Where("is_public = ?", true).
 		Order("created_at DESC").
+		Limit(limit).
+		Offset(offset).
 		Find(&playlists).Error
-	return playlists, err
+	return playlists, total, err
 }
 
 func (r *PlaylistRepository) Update(ctx context.Context, playlist *model.Playlist) error {

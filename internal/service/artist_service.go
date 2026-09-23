@@ -9,6 +9,7 @@ import (
 	"spotify-backend/internal/model"
 	"spotify-backend/internal/repository"
 	"spotify-backend/pkg/cache"
+	"spotify-backend/pkg/pagination"
 )
 
 // ErrArtistNotEmpty dikembalikan saat delete ditolak karena artist masih
@@ -39,23 +40,28 @@ func (s *ArtistService) CreateArtist(ctx context.Context, artist *model.Artist) 
 	return nil
 }
 
-func (s *ArtistService) GetAllArtists(ctx context.Context) ([]model.Artist, error) {
+// GetAllArtists mengembalikan halaman artist.
+//
+// Cache tetap menyimpan LIST UTUH (key artists:all) dan pemotongan halaman
+// dilakukan di sini. Dengan begitu format cache tidak berubah dan tidak perlu
+// key per halaman; konsekuensinya seluruh list harus muat di memori — aman
+// untuk skala katalog sekarang, dan bisa digeser ke DB kalau nanti membesar.
+func (s *ArtistService) GetAllArtists(ctx context.Context, params pagination.Params) (pagination.Page[model.Artist], error) {
 	var artists []model.Artist
 
 	hit, err := s.cache.GetJSON(ctx, cacheKeyArtistList, &artists)
-
 	warnCache("get "+cacheKeyArtistList, err)
-	if hit {
-		return artists, nil
+
+	if !hit {
+		artists, err = s.repo.FindAll(ctx)
+		if err != nil {
+			return pagination.Page[model.Artist]{}, err
+		}
+
+		warnCache("set "+cacheKeyArtistList, s.cache.SetJSON(ctx, cacheKeyArtistList, artists, s.cacheTTL))
 	}
 
-	artists, err = s.repo.FindAll(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	warnCache("set "+cacheKeyArtistList, s.cache.SetJSON(ctx, cacheKeyArtistList, artists, s.cacheTTL))
-	return artists, nil
+	return pagination.NewPage(pagination.Slice(artists, params), int64(len(artists)), params), nil
 }
 
 func (s *ArtistService) GetArtistByID(ctx context.Context, id uint) (*model.Artist, error) {

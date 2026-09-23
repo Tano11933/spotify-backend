@@ -8,6 +8,8 @@ import (
 
 	"spotify-backend/internal/model"
 	"spotify-backend/internal/service"
+	"spotify-backend/pkg/pagination"
+	"spotify-backend/pkg/response"
 	"spotify-backend/pkg/validator"
 )
 
@@ -22,7 +24,7 @@ func NewArtistHandler(service *service.ArtistService) *ArtistHandler {
 func (h *ArtistHandler) Create(c *fiber.Ctx) error {
 	var artist model.Artist
 	if err := c.BodyParser(&artist); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
+		return response.BadRequest(c, "invalid request body")
 	}
 
 	// Field ini tidak boleh ditentukan client: primary key dan timestamp.
@@ -33,7 +35,7 @@ func (h *ArtistHandler) Create(c *fiber.Ctx) error {
 	artist.UpdatedAt = time.Time{}
 
 	if err := validator.ValidateStruct(artist); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		return response.Validation(c, err)
 	}
 
 	if err := h.service.CreateArtist(c.UserContext(), &artist); err != nil {
@@ -44,17 +46,22 @@ func (h *ArtistHandler) Create(c *fiber.Ctx) error {
 }
 
 func (h *ArtistHandler) GetAll(c *fiber.Ctx) error {
-	artists, err := h.service.GetAllArtists(c.UserContext())
+	params, err := pagination.Parse(c.Query("limit"), c.Query("offset"))
+	if err != nil {
+		return response.BadRequest(c, err.Error())
+	}
+
+	page, err := h.service.GetAllArtists(c.UserContext(), params)
 	if err != nil {
 		return respondError(c, "artist", err)
 	}
-	return c.JSON(artists)
+	return c.JSON(page)
 }
 
 func (h *ArtistHandler) GetByID(c *fiber.Ctx) error {
 	id, err := parseUintParam(c, "id")
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
+		return response.BadRequest(c, "invalid id")
 	}
 
 	artist, err := h.service.GetArtistByID(c.UserContext(), id)
@@ -67,7 +74,7 @@ func (h *ArtistHandler) GetByID(c *fiber.Ctx) error {
 func (h *ArtistHandler) Update(c *fiber.Ctx) error {
 	id, err := parseUintParam(c, "id")
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
+		return response.BadRequest(c, "invalid id")
 	}
 
 	// Ambil data existing lebih dulu, lalu timpa dengan field dari body. Efeknya
@@ -83,7 +90,7 @@ func (h *ArtistHandler) Update(c *fiber.Ctx) error {
 	createdAt := artist.CreatedAt
 
 	if err := c.BodyParser(artist); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
+		return response.BadRequest(c, "invalid request body")
 	}
 
 	// ID dipaksa kembali ke nilai dari URL. Tanpa ini, body berisi {"id": 99}
@@ -92,7 +99,7 @@ func (h *ArtistHandler) Update(c *fiber.Ctx) error {
 	artist.CreatedAt = createdAt
 
 	if err := validator.ValidateStruct(artist); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+		return response.Validation(c, err)
 	}
 
 	if err := h.service.UpdateArtist(c.UserContext(), artist); err != nil {
@@ -105,7 +112,7 @@ func (h *ArtistHandler) Update(c *fiber.Ctx) error {
 func (h *ArtistHandler) Delete(c *fiber.Ctx) error {
 	id, err := parseUintParam(c, "id")
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid id"})
+		return response.BadRequest(c, "invalid id")
 	}
 
 	if err := h.service.DeleteArtist(c.UserContext(), id); err != nil {

@@ -9,6 +9,7 @@ import (
 	"spotify-backend/internal/model"
 	"spotify-backend/internal/repository"
 	"spotify-backend/pkg/cache"
+	"spotify-backend/pkg/pagination"
 )
 
 var ErrArtistNotFound = errors.New("artist not found")
@@ -51,22 +52,24 @@ func (s *AlbumService) CreateAlbum(ctx context.Context, album *model.Album) erro
 	return nil
 }
 
-func (s *AlbumService) GetAllAlbums(ctx context.Context) ([]model.Album, error) {
+// GetAllAlbums mengembalikan halaman album — strategi cache-nya sama dengan
+// GetAllArtists: simpan list utuh, potong di service.
+func (s *AlbumService) GetAllAlbums(ctx context.Context, params pagination.Params) (pagination.Page[model.Album], error) {
 	var albums []model.Album
 
 	hit, err := s.cache.GetJSON(ctx, cacheKeyAlbumList, &albums)
 	warnCache("get "+cacheKeyAlbumList, err)
-	if hit {
-		return albums, nil
+
+	if !hit {
+		albums, err = s.repo.FindAll(ctx)
+		if err != nil {
+			return pagination.Page[model.Album]{}, err
+		}
+
+		warnCache("set "+cacheKeyAlbumList, s.cache.SetJSON(ctx, cacheKeyAlbumList, albums, s.cacheTTL))
 	}
 
-	albums, err = s.repo.FindAll(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	warnCache("set "+cacheKeyAlbumList, s.cache.SetJSON(ctx, cacheKeyAlbumList, albums, s.cacheTTL))
-	return albums, nil
+	return pagination.NewPage(pagination.Slice(albums, params), int64(len(albums)), params), nil
 }
 
 func (s *AlbumService) GetAlbumByID(ctx context.Context, id uint) (*model.Album, error) {

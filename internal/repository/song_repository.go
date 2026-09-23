@@ -26,10 +26,25 @@ func (r *SongRepository) Create(ctx context.Context, song *model.Song) error {
 	return db.Preload("Artist").Preload("Album").First(song, song.ID).Error
 }
 
-func (r *SongRepository) FindAll(ctx context.Context) ([]model.Song, error) {
+// FindPage mengembalikan satu halaman lagu beserta totalnya.
+//
+// Lagu tidak di-cache (jarang dibaca berulang), jadi pagination-nya langsung
+// di SQL — berbeda dari artist/album yang memotong list hasil cache.
+func (r *SongRepository) FindPage(ctx context.Context, limit, offset int) ([]model.Song, int64, error) {
 	var songs []model.Song
-	err := r.db.WithContext(ctx).Preload("Artist").Preload("Album").Find(&songs).Error
-	return songs, err
+	var total int64
+
+	if err := r.db.WithContext(ctx).Model(&model.Song{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	err := r.db.WithContext(ctx).
+		Preload("Artist").
+		Preload("Album").
+		Limit(limit).
+		Offset(offset).
+		Find(&songs).Error
+	return songs, total, err
 }
 
 func (r *SongRepository) FindByID(ctx context.Context, id uint) (*model.Song, error) {
@@ -40,14 +55,25 @@ func (r *SongRepository) FindByID(ctx context.Context, id uint) (*model.Song, er
 	return &song, nil
 }
 
-func (r *SongRepository) FindByArtistID(ctx context.Context, artistID uint) ([]model.Song, error) {
+func (r *SongRepository) FindPageByArtistID(ctx context.Context, artistID uint, limit, offset int) ([]model.Song, int64, error) {
 	var songs []model.Song
+	var total int64
+
+	if err := r.db.WithContext(ctx).
+		Model(&model.Song{}).
+		Where("artist_id = ?", artistID).
+		Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
 	err := r.db.WithContext(ctx).
 		Preload("Artist").
 		Preload("Album").
 		Where("artist_id = ?", artistID).
+		Limit(limit).
+		Offset(offset).
 		Find(&songs).Error
-	return songs, err
+	return songs, total, err
 }
 
 func (r *SongRepository) Update(ctx context.Context, song *model.Song) error {
