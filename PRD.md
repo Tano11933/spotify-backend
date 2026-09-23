@@ -55,20 +55,29 @@ Backend + frontend clone Spotify sederhana, fokus pada kualitas arsitektur dan b
 
 ## 4. Status Saat Ini (Progress)
 
-✅ **Backend — SELESAI (belum di-commit, akan commit manual per-fitur):**
+✅ **Backend — SELESAI (di-commit per-fitur):**
 - Setup project Go + Fiber + GORM + Postgres + Redis (Docker Compose)
 - CRUD Artist, Song (relasi ke Artist, opsional ke Album), Album (relasi ke Artist, hasMany Song)
 - Struktur multi-layer: `handler → service → repository → model`, validasi via struct tag
 - User Auth lengkap: register, login, refresh token, logout, middleware JWT
 - Forgot/Reset password via SMTP
-- Redis caching untuk endpoint read-heavy (Artist, Album list)
+- Redis caching untuk endpoint read-heavy (Artist, Album list) + invalidasi saat write
 - WebSocket hub + event `song:playing`, `song:created`
+- Playlist user (many-to-many User ↔ Song) dengan playlist publik
+- Rate limiting per endpoint (Redis, Lua script)
+- Seeder data demo idempoten (`go run ./cmd/seed`)
+- Unit test: `pkg/jwt`, `internal/service`, `internal/websocket` (termasuk `-race`)
+
+✅ **Frontend — SELESAI (repo terpisah):**
+- React + Vite + TypeScript + Tailwind v4 + Zod + Zustand
+- Halaman auth, katalog, detail artist/album, playlist, dashboard admin, player, toast real-time
+- https://github.com/Tano11933/spotify-frontend
 
 🔲 **Belum dikerjakan:**
-- Frontend: setup React + Vite + Tailwind + Zod + state management (lihat `ARCHITECTURE.md` §6 untuk checklist detail)
 - Docker: `Dockerfile` backend & frontend + `docker-compose.prod.yml` untuk mode full-stack demo (lihat `DOCKER.md`)
-- Playlist (many-to-many User ↔ Song) — opsional, prioritas setelah frontend dasar selesai
-- Unit testing service layer — opsional
+- Integration test yang menyentuh Postgres/Redis sungguhan
+- Handler layer test
+- Pagination & pencarian katalog
 
 ---
 
@@ -194,10 +203,10 @@ Relasi:
 3. **Fase 3 (selesai):** Forgot/Reset password via SMTP
 4. **Fase 4 (selesai):** Redis caching di endpoint read-heavy
 5. **Fase 5 (selesai):** WebSocket hub + integrasi event `song:playing`, `song:created`
-6. **Fase 6 (sekarang):** Frontend setup (React + Vite + Tailwind v4 + Zod + Zustand) — halaman auth dulu, lalu listing artist/album/song, lalu integrasi WebSocket
-7. **Fase 7:** Docker full-stack demo (`Dockerfile` backend & frontend + `docker-compose.prod.yml`) — lihat `DOCKER.md`
-8. **Fase 8 (opsional):** Playlist (many-to-many User–Song)
-9. **Fase 9 (opsional):** Unit testing service layer
+6. **Fase 6 (selesai):** Frontend React + Vite + Tailwind v4 + Zod + Zustand — repo terpisah: https://github.com/Tano11933/spotify-frontend
+7. **Fase 7 (sekarang):** Docker full-stack demo (`Dockerfile` backend & frontend + `docker-compose.prod.yml`) — lihat `DOCKER.md`
+8. **Fase 8 (selesai):** Playlist (many-to-many User–Song) + playlist publik
+9. **Fase 9 (selesai sebagian):** Unit testing `pkg/jwt`, `internal/service`, `internal/websocket` (termasuk `-race`); handler & integration test menyusul
 
 ---
 

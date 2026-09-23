@@ -125,7 +125,7 @@ func (h *Hub) Run()  // jalan sebagai goroutine, loop selamanya
 
 ### 2.3 `internal/middleware/auth.go`
 Sudah didesain di percakapan sebelumnya — pastikan middleware ini dipakai di:
-- Semua route yang butuh login (logout, me, create playlist nanti)
+- Semua route yang butuh login (logout, me, playlist)
 - WebSocket upgrade handler (validasi token dari query param sebelum upgrade koneksi)
 
 ### 2.4 Redis Cache — `pkg/cache/redis.go` (`cache.Store` struct + DI)
@@ -292,7 +292,7 @@ Detail lengkap `Dockerfile` dan `docker-compose.prod.yml` — lihat `DOCKER.md`.
 
 ## 6. Checklist Implementasi (urutan disarankan)
 
-### Backend (SELESAI ✅ — belum di-commit oleh Gabriel, akan di-commit manual per-fitur)
+### Backend (SELESAI ✅ — di-commit per-fitur)
 - [x] Tambah `internal/model/user.go`
 - [x] Tambah `pkg/jwt/jwt.go`
 - [x] Tambah `internal/repository/user_repository.go`
@@ -307,22 +307,23 @@ Detail lengkap `Dockerfile` dan `docker-compose.prod.yml` — lihat `DOCKER.md`.
 - [x] Tambah `internal/websocket/hub.go` (hub + client + event dalam satu file)
 - [x] Tambah endpoint `GET /ws` di router dengan middleware auth khusus WebSocket
 - [x] Integrasikan broadcast `song:created` di `SongService.CreateSong`
-- [ ] Test ulang semua endpoint (Auth, forgot/reset password, cache, WebSocket) di Postman/Thunder Client sebelum commit
-- [ ] Commit per-fitur secara manual (mis. `feat(auth): ...`, `feat(smtp): ...`, `feat(cache): ...`, `feat(websocket): ...`)
+- [x] Test ulang semua endpoint (Auth, forgot/reset password, cache, WebSocket) di Postman/Thunder Client sebelum commit
+- [x] Commit per-fitur secara manual (mis. `feat(auth): ...`, `feat(smtp): ...`, `feat(cache): ...`, `feat(websocket): ...`)
 
-### Frontend (setelah backend selesai & di-commit manual oleh Gabriel)
+### Frontend (SELESAI ✅ — repo terpisah: `spotify-frontend`)
 - [x] Scaffold: `npm create vite@latest spotify-frontend -- --template react-compiler-ts`
-- [ ] Install Tailwind v4 (`@tailwindcss/vite`), konfigurasi `@theme` di `index.css` sesuai `DESIGN.md`
-- [ ] Install Inter font, Zod, React Router, Axios, Zustand, react-hook-form + resolver
-- [ ] Bikin struktur folder sesuai §3
-- [ ] `src/lib/api.ts` — axios instance + interceptor JWT + auto-refresh
-- [ ] Halaman Auth: Login, Register, Forgot/Reset Password (pakai schema Zod dari `src/schemas/auth.schema.ts`)
-- [ ] Layout utama: sidebar + top bar + now-playing bar (sesuai `DESIGN.md` §3)
-- [ ] Halaman Home: list Artist/Album/Song (card grid, sesuai `DESIGN.md` §4)
-- [ ] Integrasi WebSocket: `src/lib/websocket.ts` + toast notification saat event `song:created`
+- [x] Install Tailwind v4 (`@tailwindcss/vite`), konfigurasi `@theme` di `index.css` sesuai `DESIGN.md`
+- [x] Install Inter font, Zod, React Router, Axios, Zustand, react-hook-form + resolver
+- [x] Bikin struktur folder sesuai §3
+- [x] `src/lib/api.ts` — axios instance + interceptor JWT + auto-refresh
+- [x] Halaman Auth: Login, Register, Forgot/Reset Password (pakai schema Zod dari `src/schemas/auth.schema.ts`)
+- [x] Layout utama: sidebar + top bar + now-playing bar (sesuai `DESIGN.md` §3)
+- [x] Halaman Home: list Artist/Album/Song (card grid, sesuai `DESIGN.md` §4)
+- [x] Integrasi WebSocket: `src/lib/websocket.ts` + toast notification saat event `song:created`
 
 ### Deployment (paling akhir)
 - [ ] `Dockerfile` backend (multi-stage: golang builder → alpine runtime)
 - [ ] `Dockerfile` frontend (multi-stage: node builder → nginx runtime) + `nginx.conf`
 - [ ] `docker-compose.prod.yml` — full stack, env var lewat `.env` terpisah
-- [ ] Push ke GitHub (masing-masing repo, commit per-fitur — dilakukan manual oleh Gabriel, bukan otomatis oleh Claude Code), update README dengan diagram arsitektur
+- [x] Push ke GitHub (masing-masing repo, commit per-fitur)
+- [ ] Update README dengan diagram arsitektur

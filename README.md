@@ -4,6 +4,9 @@ REST + WebSocket API untuk aplikasi streaming musik, dibangun dengan Go. Proyek
 portofolio dengan fokus pada arsitektur multi-layer, autentikasi JWT yang bisa
 dicabut, caching Redis, dan real-time WebSocket.
 
+> **Frontend:** https://github.com/Tano11933/spotify-frontend — aplikasi React
+> yang mengonsumsi API ini (katalog, playlist, player, event real-time).
+
 ## Tech Stack
 
 | Komponen | Pilihan |
@@ -553,9 +556,11 @@ tiruan in-memory di file test.
 
 ## Belum Dikerjakan
 
-- Frontend (React + Vite + TypeScript + Tailwind)
 - Redis Pub/Sub sebagai broker WebSocket — hub in-memory tidak sinkron kalau
   backend di-scale ke beberapa instance
 - Integration test yang menyentuh Postgres/Redis sungguhan
 - Handler layer belum punya test
 - Upload file audio (asumsi file sudah tersedia via URL eksternal)
+- Pagination & pencarian katalog — list endpoint masih mengembalikan seluruh isi tabel
+- Docker full-stack demo (`Dockerfile` backend & frontend +
+  `docker-compose.prod.yml`) — lihat `DOCKER.md`
