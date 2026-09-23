@@ -2,6 +2,7 @@ package handler
 
 import (
 	"errors"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 
@@ -23,6 +24,13 @@ func (h *SongHandler) Create(c *fiber.Ctx) error {
 	if err := c.BodyParser(&song); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
 	}
+
+	// Sanitasi mass assignment — lihat catatan di album_handler.go.
+	song.ID = 0
+	song.Artist = nil
+	song.Album = nil
+	song.CreatedAt = time.Time{}
+	song.UpdatedAt = time.Time{}
 
 	if err := validator.ValidateStruct(song); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
@@ -83,10 +91,15 @@ func (h *SongHandler) Update(c *fiber.Ctx) error {
 		return respondError(c, "song", err)
 	}
 
+	// BodyParser menimpa field yang ada di body — termasuk created_at.
+	// Simpan nilai aslinya dulu, lalu kembalikan setelah parse.
+	createdAt := song.CreatedAt
+
 	if err := c.BodyParser(song); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
 	}
 	song.ID = id
+	song.CreatedAt = createdAt
 
 	if err := validator.ValidateStruct(song); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})

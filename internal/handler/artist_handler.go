@@ -2,6 +2,7 @@ package handler
 
 import (
 	"strconv"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 
@@ -23,6 +24,13 @@ func (h *ArtistHandler) Create(c *fiber.Ctx) error {
 	if err := c.BodyParser(&artist); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
 	}
+
+	// Field ini tidak boleh ditentukan client: primary key dan timestamp.
+	// Tanpa sanitasi, POST {"id":99999,"created_at":"..."} menulis nilai itu
+	// apa adanya — kelas bug mass assignment (lihat catatan di auth_dto.go).
+	artist.ID = 0
+	artist.CreatedAt = time.Time{}
+	artist.UpdatedAt = time.Time{}
 
 	if err := validator.ValidateStruct(artist); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
@@ -70,6 +78,10 @@ func (h *ArtistHandler) Update(c *fiber.Ctx) error {
 		return respondError(c, "artist", err)
 	}
 
+	// BodyParser menimpa field yang ada di body — termasuk created_at.
+	// Simpan nilai aslinya dulu, lalu kembalikan setelah parse.
+	createdAt := artist.CreatedAt
+
 	if err := c.BodyParser(artist); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
 	}
@@ -77,6 +89,7 @@ func (h *ArtistHandler) Update(c *fiber.Ctx) error {
 	// ID dipaksa kembali ke nilai dari URL. Tanpa ini, body berisi {"id": 99}
 	// akan membuat request PUT /api/artists/1 justru menimpa artist 99.
 	artist.ID = id
+	artist.CreatedAt = createdAt
 
 	if err := validator.ValidateStruct(artist); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})

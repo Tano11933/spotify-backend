@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"time"
+
 	"github.com/gofiber/fiber/v2"
 
 	"spotify-backend/internal/model"
@@ -21,6 +23,15 @@ func (h *AlbumHandler) Create(c *fiber.Ctx) error {
 	if err := c.BodyParser(&album); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
 	}
+
+	// Sanitasi mass assignment: primary key, timestamp, dan relasi tidak boleh
+	// datang dari body. Relasi hanya ditentukan lewat artist_id (dan album_id
+	// di endpoint song) yang sudah divalidasi service.
+	album.ID = 0
+	album.Artist = nil
+	album.Songs = nil
+	album.CreatedAt = time.Time{}
+	album.UpdatedAt = time.Time{}
 
 	if err := validator.ValidateStruct(album); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
@@ -65,10 +76,15 @@ func (h *AlbumHandler) Update(c *fiber.Ctx) error {
 		return respondError(c, "album", err)
 	}
 
+	// BodyParser menimpa field yang ada di body — termasuk created_at.
+	// Simpan nilai aslinya dulu, lalu kembalikan setelah parse.
+	createdAt := album.CreatedAt
+
 	if err := c.BodyParser(album); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request body"})
 	}
 	album.ID = id
+	album.CreatedAt = createdAt
 
 	if err := validator.ValidateStruct(album); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
