@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"spotify-backend/internal/model"
@@ -11,6 +12,10 @@ import (
 )
 
 var ErrArtistNotFound = errors.New("artist not found")
+
+// ErrAlbumNotEmpty dikembalikan saat delete ditolak karena album masih
+// memiliki lagu. Handler memetakannya ke 409 — lihat ErrArtistNotEmpty.
+var ErrAlbumNotEmpty = errors.New("album still has songs")
 
 type AlbumService struct {
 	repo       *repository.AlbumRepository
@@ -97,6 +102,15 @@ func (s *AlbumService) UpdateAlbum(ctx context.Context, album *model.Album) erro
 }
 
 func (s *AlbumService) DeleteAlbum(ctx context.Context, id uint) error {
+	songs, err := s.repo.CountSongs(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	if songs > 0 {
+		return fmt.Errorf("%w: %d song(s)", ErrAlbumNotEmpty, songs)
+	}
+
 	if err := s.repo.Delete(ctx, id); err != nil {
 		return err
 	}
