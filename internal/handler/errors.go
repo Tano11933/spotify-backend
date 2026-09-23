@@ -8,28 +8,28 @@ import (
 
 	"spotify-backend/internal/repository"
 	"spotify-backend/internal/service"
+	"spotify-backend/pkg/apperr"
+	"spotify-backend/pkg/response"
 )
 
 func respondError(c *fiber.Ctx, resource string, err error) error {
 	switch {
 	case errors.Is(err, repository.ErrNotFound),
 		errors.Is(err, service.ErrSongNotFound):
-		return c.Status(fiber.StatusNotFound).
-			JSON(fiber.Map{"error": resource + " not found"})
+		return response.NotFound(c, resource+" not found")
 
 	case errors.Is(err, service.ErrArtistNotFound):
-		return c.Status(fiber.StatusUnprocessableEntity).JSON(fiber.Map{"error": err.Error()})
+		return response.Error(c, fiber.StatusUnprocessableEntity, apperr.CodeValidation, err.Error())
 
 	case errors.Is(err, repository.ErrDuplicate):
-		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
+		return response.Conflict(c, err.Error())
 
 	case errors.Is(err, service.ErrArtistNotEmpty),
 		errors.Is(err, service.ErrAlbumNotEmpty):
-		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": err.Error()})
+		return response.Conflict(c, err.Error())
 
 	default:
 		log.Printf("handler error on %s %s: %v", c.Method(), c.Path(), err)
-		return c.Status(fiber.StatusInternalServerError).
-			JSON(fiber.Map{"error": "internal server error"})
+		return response.Internal(c)
 	}
 }

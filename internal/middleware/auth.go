@@ -8,6 +8,7 @@ import (
 
 	"spotify-backend/internal/model"
 	jwtpkg "spotify-backend/pkg/jwt"
+	"spotify-backend/pkg/response"
 )
 
 const (
@@ -40,20 +41,17 @@ func (m *AuthMiddleware) protect(allowQueryToken bool) fiber.Handler {
 		}
 
 		if raw == "" {
-			return c.Status(fiber.StatusUnauthorized).
-				JSON(fiber.Map{"error": "missing authorization token"})
+			return response.Unauthorized(c, "missing authorization token")
 		}
 
 		claims, err := m.jwt.ParseAccessToken(raw)
 		if err != nil {
-			return c.Status(fiber.StatusUnauthorized).
-				JSON(fiber.Map{"error": "invalid or expired token"})
+			return response.Unauthorized(c, "invalid or expired token")
 		}
 
 		userID, err := claims.UserID()
 		if err != nil {
-			return c.Status(fiber.StatusUnauthorized).
-				JSON(fiber.Map{"error": "invalid or expired token"})
+			return response.Unauthorized(c, "invalid or expired token")
 		}
 
 		c.Locals(ContextUserID, userID)
@@ -67,8 +65,7 @@ func (m *AuthMiddleware) RequireAdmin() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		role, ok := c.Locals(ContextUserRole).(string)
 		if !ok || role != string(model.RoleAdmin) {
-			return c.Status(fiber.StatusForbidden).
-				JSON(fiber.Map{"error": "admin access required"})
+			return response.Forbidden(c, "admin access required")
 		}
 		return c.Next()
 	}

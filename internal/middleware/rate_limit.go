@@ -10,6 +10,9 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/redis/go-redis/v9"
+
+	"spotify-backend/pkg/apperr"
+	"spotify-backend/pkg/response"
 )
 
 var rateLimitScript = redis.NewScript(`
@@ -71,9 +74,8 @@ func (rl *RateLimiter) Limit(cfg RateLimitConfig) fiber.Handler {
 			}
 			c.Set(fiber.HeaderRetryAfter, strconv.Itoa(retryAfter))
 
-			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
-				"error": fmt.Sprintf("too many requests, try again in %d seconds", retryAfter),
-			})
+			return response.Error(c, fiber.StatusTooManyRequests, apperr.CodeRateLimited,
+				fmt.Sprintf("too many requests, try again in %d seconds", retryAfter))
 		}
 
 		return c.Next()

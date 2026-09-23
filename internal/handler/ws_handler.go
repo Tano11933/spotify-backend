@@ -12,6 +12,8 @@ import (
 	"spotify-backend/internal/middleware"
 	"spotify-backend/internal/service"
 	ws "spotify-backend/internal/websocket"
+	"spotify-backend/pkg/apperr"
+	"spotify-backend/pkg/response"
 )
 
 type WSHandler struct {
@@ -27,8 +29,7 @@ func (h *WSHandler) UpgradeGuard(c *fiber.Ctx) error {
 	if fiberws.IsWebSocketUpgrade(c) {
 		return c.Next()
 	}
-	return c.Status(fiber.StatusUpgradeRequired).
-		JSON(fiber.Map{"error": "websocket upgrade required"})
+	return response.Error(c, fiber.StatusUpgradeRequired, apperr.CodeUpgradeRequired, "websocket upgrade required")
 }
 
 func (h *WSHandler) Handle() fiber.Handler {
