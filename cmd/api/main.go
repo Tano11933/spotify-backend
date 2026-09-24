@@ -8,19 +8,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
 	"github.com/joho/godotenv"
 
-	"spotify-backend/internal/handler"
+	"spotify-backend/internal/app"
 	"spotify-backend/internal/middleware"
-	"spotify-backend/internal/model"
-	"spotify-backend/internal/repository"
-	"spotify-backend/internal/router"
 	"spotify-backend/internal/service"
-	ws "spotify-backend/internal/websocket"
 	"spotify-backend/pkg/cache"
 	"spotify-backend/pkg/database"
-	jwtpkg "spotify-backend/pkg/jwt"
 	"spotify-backend/pkg/mailer"
 )
 
@@ -33,100 +27,42 @@ func main() {
 	db := database.ConnectPostgres()
 	rdb := cache.ConnectRedis()
 
-	// Album sebelumnya tidak disebut di sini dan tabelnya hanya kebetulan
-	// terbuat karena ikut termigrasi lewat relasi Song.Album. Sekarang semua
-	// model didaftarkan eksplisit, urut dari yang tidak punya dependensi.
-	if err := db.AutoMigrate(
-		&model.User{},
-		&model.Artist{},
-		&model.Album{},
-		&model.Song{},
-		// Playlist terakhir: ia bergantung pada User (pemilik) dan Song (lewat
-		// tabel perantara playlist_songs, yang dibuat GORM di langkah ini juga).
-		&model.Playlist{},
-	); err != nil {
+	origins, err := middleware.AllowedOriginsFromEnv()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// --- Rakit aplikasi ---------------------------------------------------
+	//
+	// Semua dependency dirangkai di internal/app — main hanya membaca
+	// environment dan menyalakan server. Itu yang membuat test integrasi bisa
+	// membangun aplikasi yang sama di atas container Postgres/Redis.
+	application, err := app.New(app.Config{
+		DB:    db,
+		Redis: rdb,
+
+		JWTSecret:        mustEnv("JWT_SECRET"),
+		JWTRefreshSecret: mustEnv("JWT_REFRESH_SECRET"),
+		AccessTTL:        envDuration("JWT_ACCESS_TTL", 15*time.Minute),
+		RefreshTTL:       envDuration("JWT_REFRESH_TTL", 7*24*time.Hour),
+
+		CacheTTL:      envDuration("CACHE_TTL", 5*time.Minute),
+		ResetTokenTTL: envDuration("RESET_TOKEN_TTL", 15*time.Minute),
+
+		FrontendURL: os.Getenv("FRONTEND_URL"),
+		CORSOrigins: origins,
+		Mailer:      buildMailer(),
+	})
+	if err != nil {
+		log.Fatal("Failed to build app: ", err)
+	}
+
+	// Migrasi tabel berjalan otomatis via GORM AutoMigrate saat startup.
+	if err := application.Migrate(); err != nil {
 		log.Fatal("Failed to run migrations: ", err)
 	}
 
-	cacheStore := cache.NewStore(rdb)
-	cacheTTL := envDuration("CACHE_TTL", 5*time.Minute)
-
-	// --- WebSocket hub ----------------------------------------------------
-	//
-	// Hub harus jalan sebagai goroutine terpisah dan dibuat SEBELUM service,
-	// karena SongService menerimanya sebagai dependency untuk broadcast
-	// song:created.
-	hub := ws.NewHub()
-	go hub.Run()
-
-	// --- JWT --------------------------------------------------------------
-	jwtManager := jwtpkg.NewManager(
-		mustEnv("JWT_SECRET"),
-		mustEnv("JWT_REFRESH_SECRET"),
-		envDuration("JWT_ACCESS_TTL", 15*time.Minute),
-		envDuration("JWT_REFRESH_TTL", 7*24*time.Hour),
-	)
-
-	// --- Mailer -----------------------------------------------------------
-	resetTokenTTL := envDuration("RESET_TOKEN_TTL", 15*time.Minute)
-	mailService := service.NewMailService(buildMailer(), os.Getenv("FRONTEND_URL"), resetTokenTTL)
-
-	// --- Repository → Service → Handler -----------------------------------
-	//
-	// Semua dependency dirangkai di sini dan hanya di sini. Tidak ada satu pun
-	// variabel global di seluruh proyek — setiap komponen menerima yang ia
-	// butuhkan lewat constructor. Itulah yang membuat tiap layer bisa dites
-	// dengan dependency tiruan.
-	userRepo := repository.NewUserRepository(db)
-	tokenRepo := repository.NewTokenRepository(rdb)
-	artistRepo := repository.NewArtistRepository(db)
-	albumRepo := repository.NewAlbumRepository(db)
-	songRepo := repository.NewSongRepository(db)
-	playlistRepo := repository.NewPlaylistRepository(db)
-
-	authService := service.NewAuthService(userRepo, tokenRepo, jwtManager, mailService, resetTokenTTL)
-	artistService := service.NewArtistService(artistRepo, cacheStore, cacheTTL)
-	albumService := service.NewAlbumService(albumRepo, artistRepo, cacheStore, cacheTTL)
-	songService := service.NewSongService(songRepo, artistRepo, cacheStore, hub)
-	playlistService := service.NewPlaylistService(playlistRepo, songRepo)
-
-	h := &router.Handlers{
-		Artist:   handler.NewArtistHandler(artistService),
-		Song:     handler.NewSongHandler(songService),
-		Album:    handler.NewAlbumHandler(albumService),
-		Auth:     handler.NewAuthHandler(authService),
-		Playlist: handler.NewPlaylistHandler(playlistService),
-		WS:       handler.NewWSHandler(hub, songService),
-	}
-
-	mw := &router.Middlewares{
-		Auth:      middleware.NewAuthMiddleware(jwtManager),
-		RateLimit: middleware.NewRateLimiter(rdb),
-	}
-
-	app := fiber.New(fiber.Config{
-		AppName: "Spotify Clone API",
-
-		// Batasi ukuran body request. Default Fiber 4MB; endpoint di sini hanya
-		// menerima JSON kecil, jadi 1MB sudah lebih dari cukup dan sekaligus
-		// mengurangi permukaan serangan.
-		BodyLimit: 1 * 1024 * 1024,
-
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
-	})
-
-	// CORS harus dipasang SEBELUM route didaftarkan.
-	//
-	// Fiber menjalankan middleware sesuai urutan pendaftaran. Kalau app.Use ini
-	// ditaruh setelah SetupRoutes, request preflight OPTIONS akan lebih dulu
-	// tertangkap oleh route matcher (dan dibalas 405) sebelum sempat sampai ke
-	// middleware CORS.
-	app.Use(middleware.CORS())
-
-	router.SetupRoutes(app, h, mw)
-
-	startWithGracefulShutdown(app, hub)
+	startWithGracefulShutdown(application)
 }
 
 // startWithGracefulShutdown menjalankan server dan menunggu sinyal berhenti.
@@ -134,9 +70,7 @@ func main() {
 // Kenapa perlu? Kalau proses langsung dibunuh, request yang sedang diproses
 // terputus di tengah jalan dan koneksi WebSocket mati tanpa frame close yang
 // benar. Graceful shutdown memberi waktu semuanya beres dulu.
-//
-// Bagian ini juga contoh bagus pemakaian channel di luar konteks WebSocket.
-func startWithGracefulShutdown(app *fiber.App, hub *ws.Hub) {
+func startWithGracefulShutdown(application *app.App) {
 	port := os.Getenv("APP_PORT")
 	if port == "" {
 		port = "9000"
@@ -148,9 +82,9 @@ func startWithGracefulShutdown(app *fiber.App, hub *ws.Hub) {
 	serverErr := make(chan error, 1)
 
 	go func() {
-		// app.Listen memblokir, jadi harus di goroutine — kalau tidak, kode di
+		// Listen memblokir, jadi harus di goroutine — kalau tidak, kode di
 		// bawahnya tidak akan pernah tereksekusi.
-		serverErr <- app.Listen(":" + port)
+		serverErr <- application.Fiber.Listen(":" + port)
 	}()
 
 	// signal.Notify menyambungkan sinyal OS ke sebuah channel. SIGINT adalah
@@ -170,9 +104,9 @@ func startWithGracefulShutdown(app *fiber.App, hub *ws.Hub) {
 
 		// Hentikan hub lebih dulu supaya semua koneksi WebSocket menerima frame
 		// close yang benar, bukan sekadar terputus.
-		hub.Stop()
+		application.Shutdown()
 
-		if err := app.ShutdownWithTimeout(10 * time.Second); err != nil {
+		if err := application.Fiber.ShutdownWithTimeout(10 * time.Second); err != nil {
 			log.Printf("Forced shutdown: %v", err)
 		}
 		log.Println("Server stopped")
