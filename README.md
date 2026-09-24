@@ -202,7 +202,22 @@ header `Origin`.
 
 Base URL: `http://127.0.0.1:9000`
 
-**Format error selalu sama:** `{"error": "pesan singkat"}`
+**Format error selalu sama:** `{"error": "pesan singkat", "code": "KODE"}`
+
+`code` bersifat machine-readable (`VALIDATION_FAILED`, `UNAUTHORIZED`, `FORBIDDEN`,
+`NOT_FOUND`, `CONFLICT`, `RATE_LIMITED`, `UPGRADE_REQUIRED`, `INTERNAL`) supaya
+frontend bisa bereaksi per jenis kegagalan tanpa mencocokkan teks pesan. Endpoint
+yang gagal validasi juga menyertakan `details: [{field, rule}]`.
+
+**Semua endpoint list memakai envelope pagination:**
+
+```json
+{ "items": [], "total": 233, "limit": 20, "offset": 0 }
+```
+
+`?limit=` (default 20, maks 100) dan `?offset=`; nilai non-numerik dibalas `400`,
+nilai di luar rentang di-clamp. Berlaku untuk `/api/artists`, `/api/albums`,
+`/api/songs`, `/api/artists/:id/songs`, `/api/playlists`, `/api/playlists/public`.
 
 **Autentikasi:** kirim header `Authorization: Bearer <access_token>`.
 
@@ -447,6 +462,31 @@ anonim juga.
 > informasi. Untuk operasi tulis, `403` memang dipakai: pemanggil sudah
 > menunjukkan niat mengubah sesuatu yang spesifik, dan pesan jelas lebih berguna.
 
+### Search
+
+| Method | Endpoint | Akses |
+|---|---|---|
+| GET | `/api/search?q=&type=&limit=&offset=` | 🌐 |
+
+Hasil dikelompokkan per tipe — grup yang tidak diminta tidak muncul di response:
+
+```json
+{
+  "tracks":    { "items": [], "total": 1, "limit": 20, "offset": 0 },
+  "artists":   { "items": [], "total": 1, "limit": 20, "offset": 0 },
+  "albums":    { "items": [], "total": 0, "limit": 20, "offset": 0 },
+  "playlists": { "items": [], "total": 0, "limit": 20, "offset": 0 }
+}
+```
+
+- `q` minimal 2 karakter; `type` opsional (`track,artist,album,playlist`), default semua.
+- Tiga mekanisme digabung: pencocokan kata penuh (`tsvector`), substring
+  (`ILIKE`), dan kemiripan per kata (`word_similarity`) — jadi typo seperti
+  `sinja` tetap menemukan `Senja`. Hasil diurutkan `ts_rank` lalu kemiripan trigram.
+- Hanya playlist **publik** yang ikut dicari.
+- Index GIN (`pg_trgm` + `tsvector`) dibuat lewat migrasi SQL di
+  `internal/migrations/sql/`, dijalankan otomatis saat startup.
+
 ### WebSocket
 
 ```
@@ -554,13 +594,24 @@ Test auth service dan mail service jalan **tanpa Postgres dan tanpa Redis** —
 dependency-nya interface (`UserStore`, `TokenStore`, `Mailer`) dengan implementasi
 tiruan in-memory di file test.
 
+### Integration test
+
+```bash
+go test -tags=integration ./test/integration/...
+```
+
+Menyalakan Postgres + Redis sementara lewat **testcontainers** (butuh Docker),
+menjalankan migrasi seperti aplikasi asli, lalu menguji alur end-to-end:
+auth + rotasi refresh token, invalidasi cache artist→album, guard delete 409,
+bentuk payload (artist/album/user ter-preload), proteksi mass assignment,
+envelope pagination, kode error, dan pencarian (termasuk typo).
+
 ## Belum Dikerjakan
 
 - Redis Pub/Sub sebagai broker WebSocket — hub in-memory tidak sinkron kalau
   backend di-scale ke beberapa instance
-- Integration test yang menyentuh Postgres/Redis sungguhan
-- Handler layer belum punya test
+- Handler layer belum punya unit test (dengan service tiruan)
 - Upload file audio (asumsi file sudah tersedia via URL eksternal)
-- Pagination & pencarian katalog — list endpoint masih mengembalikan seluruh isi tabel
 - Docker full-stack demo (`Dockerfile` backend & frontend +
   `docker-compose.prod.yml`) — lihat `DOCKER.md`
+- Cursor pagination untuk feed/history (list katalog sudah offset-based)

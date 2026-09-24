@@ -67,6 +67,9 @@ Backend + frontend clone Spotify sederhana, fokus pada kualitas arsitektur dan b
 - Rate limiting per endpoint (Redis, Lua script)
 - Seeder data demo idempoten (`go run ./cmd/seed`)
 - Unit test: `pkg/jwt`, `internal/service`, `internal/websocket` (termasuk `-race`)
+- Pagination envelope seragam + kode error machine-readable (`code`) di seluruh API
+- Pencarian katalog (tsvector + trigram, tahan typo) dengan migrasi SQL ringan
+- Integration test lewat testcontainers (Postgres + Redis sungguhan)
 
 ✅ **Frontend — SELESAI (repo terpisah):**
 - React + Vite + TypeScript + Tailwind v4 + Zod + Zustand
@@ -75,9 +78,8 @@ Backend + frontend clone Spotify sederhana, fokus pada kualitas arsitektur dan b
 
 🔲 **Belum dikerjakan:**
 - Docker: `Dockerfile` backend & frontend + `docker-compose.prod.yml` untuk mode full-stack demo (lihat `DOCKER.md`)
-- Integration test yang menyentuh Postgres/Redis sungguhan
-- Handler layer test
-- Pagination & pencarian katalog
+- Handler layer unit test (dengan service tiruan)
+- Cursor pagination untuk feed/history
 
 ---
 
@@ -161,6 +163,11 @@ Relasi:
 | Endpoint | Deskripsi |
 |---|---|
 | `GET /ws` (upgrade) | Koneksi WebSocket, autentikasi via query param `?token=<access_token>` atau header saat handshake |
+
+### Search
+| Method | Endpoint | Auth | Deskripsi |
+|---|---|---|---|
+| GET | `/api/search?q=&type=&limit=&offset=` | - | Cari lagu/artist/album/playlist; hasil dikelompokkan per tipe; tahan typo |
 
 ---
 
