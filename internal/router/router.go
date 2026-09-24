@@ -15,6 +15,7 @@ type Handlers struct {
 	Album    *handler.AlbumHandler
 	Auth     *handler.AuthHandler
 	Playlist *handler.PlaylistHandler
+	Search   *handler.SearchHandler
 	WS       *handler.WSHandler
 }
 
@@ -33,6 +34,7 @@ func SetupRoutes(app *fiber.App, h *Handlers, mw *Middlewares) {
 	registerAuthRoutes(api, h, mw)
 	registerCatalogRoutes(api, h, mw)
 	registerPlaylistRoutes(api, h, mw)
+	registerSearchRoutes(api, h)
 	registerWebSocketRoute(app, h, mw)
 }
 
@@ -185,8 +187,16 @@ func registerPlaylistRoutes(api fiber.Router, h *Handlers, mw *Middlewares) {
 	playlists.Delete("/:id/songs/:songId", h.Playlist.RemoveSong)
 }
 
-func registerWebSocketRoute(app *fiber.App, h *Handlers, mw *Middlewares) {
-	// /ws didaftarkan di app, bukan di grup /api, karena WebSocket bukan
+// registerSearchRoutes mendaftarkan pencarian katalog.
+//
+// Search tidak di-cache: hasilnya bergantung pada query dan index GIN sudah
+// membuat pencariannya murah. Endpoint ini publik — halaman pencarian harus
+// bisa dipakai tanpa login.
+func registerSearchRoutes(api fiber.Router, h *Handlers) {
+	api.Get("/search", h.Search.Search)
+}
+
+func registerWebSocketRoute(app *fiber.App, h *Handlers, mw *Middlewares) {	// /ws didaftarkan di app, bukan di grup /api, karena WebSocket bukan
 	// endpoint REST.
 	//
 	// Rantainya: autentikasi → pastikan ini benar-benar upgrade → tangani socket.
