@@ -43,7 +43,14 @@ var (
 	// ID fixture — dipakai test supaya tidak perlu mencari lewat API.
 	fixtureArtistID   uint
 	fixtureAlbumID    uint
+	fixtureSongID     uint
 	fixturePlaylistID uint
+
+	// Cache access token per email. Endpoint login dibatasi 10 percobaan /
+	// 5 menit per IP — kalau setiap test login sendiri, suite integrasi
+	// menghabiskan kuota itu dan gagal dengan 429. Token di-cache per email
+	// supaya login hanya terjadi sekali per user.
+	tokenCache = map[string]string{}
 )
 
 // silentMailer menelan email supaya output test tidak penuh isi reset password.
@@ -170,6 +177,7 @@ func seedFixture() error {
 	if err := db.Create(&song).Error; err != nil {
 		return err
 	}
+	fixtureSongID = song.ID
 
 	playlist := model.Playlist{Name: "Public Mix", Description: "fixture", IsPublic: true, UserID: user.ID}
 	if err := db.Create(&playlist).Error; err != nil {
@@ -218,8 +226,16 @@ func do(t *testing.T, method, path, token string, body any) (int, map[string]any
 }
 
 // login mengembalikan access token untuk kredensial yang diberikan.
+//
+// Token di-cache per email: suite ini memanggil login dari banyak test,
+// sementara endpoint login dibatasi 10 percobaan / 5 menit per IP. Tanpa
+// cache, test yang berjalan belakangan akan gagal 429 meski kodenya benar.
 func login(t *testing.T, email, password string) string {
 	t.Helper()
+
+	if token, ok := tokenCache[email]; ok {
+		return token
+	}
 
 	status, payload := do(t, "POST", "/api/auth/login", "", map[string]string{
 		"email":    email,
@@ -238,6 +254,8 @@ func login(t *testing.T, email, password string) string {
 	if !ok || access == "" {
 		t.Fatalf("access token kosong: %v", tokens)
 	}
+
+	tokenCache[email] = access
 	return access
 }
 
