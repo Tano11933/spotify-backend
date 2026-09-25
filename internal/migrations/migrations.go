@@ -100,25 +100,29 @@ func apply(db *gorm.DB, version, raw string) error {
 // Postgres memakai prepared statement yang tidak menerima banyak perintah
 // sekaligus.
 //
-// Pemisahan ini naif dan sengaja: file migrasi proyek ini sederhana (tanpa
-// function body / dollar-quoting). Kalau nanti ada migrasi yang memuat ";" di
-// dalam string, pisahkan statement-nya ke file berbeda.
+// Komentar baris penuh dibuang LEBIH DULU, sebelum pemecahan — kalau tidak,
+// tanda ";" yang muncul di dalam kalimat komentar ikut memecah statement.
+// (Bug ini pernah terjadi: komentar berisi "primary key-nya; file ini" membuat
+// potongan "file ini" dianggap SQL dan migrasi gagal.)
+//
+// Batasannya: komentar inline (setelah kode pada baris yang sama) dan ";" di
+// dalam string literal tidak didukung — tulis statement-nya di baris terpisah.
 func splitStatements(raw string) []string {
-	parts := strings.Split(raw, ";")
+	var cleaned strings.Builder
+
+	for _, line := range strings.Split(raw, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "--") {
+			continue
+		}
+		cleaned.WriteString(line)
+		cleaned.WriteString("\n")
+	}
+
+	parts := strings.Split(cleaned.String(), ";")
 	statements := make([]string, 0, len(parts))
 
 	for _, part := range parts {
-		lines := strings.Split(part, "\n")
-		kept := make([]string, 0, len(lines))
-
-		for _, line := range lines {
-			if strings.HasPrefix(strings.TrimSpace(line), "--") {
-				continue
-			}
-			kept = append(kept, line)
-		}
-
-		statement := strings.TrimSpace(strings.Join(kept, "\n"))
+		statement := strings.TrimSpace(part)
 		if statement != "" {
 			statements = append(statements, statement)
 		}
