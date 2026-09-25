@@ -106,6 +106,7 @@ func New(cfg Config) (*App, error) {
 	songRepo := repository.NewSongRepository(cfg.DB)
 	playlistRepo := repository.NewPlaylistRepository(cfg.DB)
 	searchRepo := repository.NewSearchRepository(cfg.DB)
+	libraryRepo := repository.NewLibraryRepository(cfg.DB)
 
 	authService := service.NewAuthService(userRepo, tokenRepo, jwtManager, mailService, cfg.ResetTokenTTL)
 	artistService := service.NewArtistService(artistRepo, cacheStore, cfg.CacheTTL)
@@ -113,6 +114,7 @@ func New(cfg Config) (*App, error) {
 	songService := service.NewSongService(songRepo, artistRepo, cacheStore, hub)
 	playlistService := service.NewPlaylistService(playlistRepo, songRepo)
 	searchService := service.NewSearchService(searchRepo)
+	libraryService := service.NewLibraryService(libraryRepo, songRepo, albumRepo, artistRepo)
 
 	h := &router.Handlers{
 		Artist:   handler.NewArtistHandler(artistService),
@@ -121,6 +123,7 @@ func New(cfg Config) (*App, error) {
 		Auth:     handler.NewAuthHandler(authService),
 		Playlist: handler.NewPlaylistHandler(playlistService),
 		Search:   handler.NewSearchHandler(searchService),
+		Library:  handler.NewLibraryHandler(libraryService),
 		WS:       handler.NewWSHandler(hub, songService),
 	}
 
@@ -162,6 +165,10 @@ func (a *App) Migrate() error {
 		&model.Album{},
 		&model.Song{},
 		&model.Playlist{},
+		// Tabel library: bergantung pada User, Song, Album, dan Artist.
+		&model.SavedTrack{},
+		&model.SavedAlbum{},
+		&model.FollowedArtist{},
 	); err != nil {
 		return err
 	}

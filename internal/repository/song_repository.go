@@ -55,6 +55,14 @@ func (r *SongRepository) FindByID(ctx context.Context, id uint) (*model.Song, er
 	return &song, nil
 }
 
+// Exists mengecek keberadaan lagu tanpa memuat relasinya — dipakai validasi
+// ringan (mis. sebelum menyimpan lagu ke library).
+func (r *SongRepository) Exists(ctx context.Context, id uint) (bool, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&model.Song{}).Where("id = ?", id).Count(&count).Error
+	return count > 0, err
+}
+
 func (r *SongRepository) FindPageByArtistID(ctx context.Context, artistID uint, limit, offset int) ([]model.Song, int64, error) {
 	var songs []model.Song
 	var total int64

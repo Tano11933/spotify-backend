@@ -16,6 +16,7 @@ type Handlers struct {
 	Auth     *handler.AuthHandler
 	Playlist *handler.PlaylistHandler
 	Search   *handler.SearchHandler
+	Library  *handler.LibraryHandler
 	WS       *handler.WSHandler
 }
 
@@ -34,6 +35,7 @@ func SetupRoutes(app *fiber.App, h *Handlers, mw *Middlewares) {
 	registerAuthRoutes(api, h, mw)
 	registerCatalogRoutes(api, h, mw)
 	registerPlaylistRoutes(api, h, mw)
+	registerLibraryRoutes(api, h, mw)
 	registerSearchRoutes(api, h)
 	registerWebSocketRoute(app, h, mw)
 }
@@ -185,6 +187,30 @@ func registerPlaylistRoutes(api fiber.Router, h *Handlers, mw *Middlewares) {
 
 	playlists.Post("/:id/songs", h.Playlist.AddSong)
 	playlists.Delete("/:id/songs/:songId", h.Playlist.RemoveSong)
+}
+
+// registerLibraryRoutes mendaftarkan pustaka pribadi user: liked songs,
+// album tersimpan, dan artist yang diikuti.
+//
+// Semua endpoint butuh login dan selalu bekerja pada user yang sedang login —
+// tidak ada parameter user di path, jadi tidak ada permukaan untuk IDOR.
+func registerLibraryRoutes(api fiber.Router, h *Handlers, mw *Middlewares) {
+	me := api.Group("/me", mw.Auth.Protected())
+
+	me.Put("/tracks/:songId", h.Library.SaveTrack)
+	me.Delete("/tracks/:songId", h.Library.RemoveTrack)
+	me.Get("/tracks", h.Library.GetTracks)
+	me.Get("/tracks/contains", h.Library.TracksContain)
+
+	me.Put("/albums/:albumId", h.Library.SaveAlbum)
+	me.Delete("/albums/:albumId", h.Library.RemoveAlbum)
+	me.Get("/albums", h.Library.GetAlbums)
+	me.Get("/albums/contains", h.Library.AlbumsContain)
+
+	me.Put("/following/:artistId", h.Library.FollowArtist)
+	me.Delete("/following/:artistId", h.Library.UnfollowArtist)
+	me.Get("/following", h.Library.GetFollowing)
+	me.Get("/following/contains", h.Library.FollowingContain)
 }
 
 // registerSearchRoutes mendaftarkan pencarian katalog.

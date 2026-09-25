@@ -81,3 +81,10 @@ func (r *ArtistRepository) FindAlbumIDsByArtist(ctx context.Context, id uint) ([
 		Pluck("id", &ids).Error
 	return ids, err
 }
+
+// Exists mengecek keberadaan artist tanpa memuat relasinya.
+func (r *ArtistRepository) Exists(ctx context.Context, id uint) (bool, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&model.Artist{}).Where("id = ?", id).Count(&count).Error
+	return count > 0, err
+}

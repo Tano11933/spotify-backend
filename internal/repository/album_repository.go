@@ -79,3 +79,10 @@ func (r *AlbumRepository) CountSongs(ctx context.Context, id uint) (int64, error
 		Count(&count).Error
 	return count, err
 }
+
+// Exists mengecek keberadaan album tanpa memuat relasinya.
+func (r *AlbumRepository) Exists(ctx context.Context, id uint) (bool, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&model.Album{}).Where("id = ?", id).Count(&count).Error
+	return count > 0, err
+}
