@@ -69,6 +69,7 @@ Backend + frontend clone Spotify sederhana, fokus pada kualitas arsitektur dan b
 - Unit test: `pkg/jwt`, `internal/service`, `internal/websocket` (termasuk `-race`)
 - Pagination envelope seragam + kode error machine-readable (`code`) di seluruh API
 - Pencarian katalog (tsvector + trigram, tahan typo) dengan migrasi SQL ringan
+- Library user: liked songs, album tersimpan, artist diikuti (FK cascade)
 - Integration test lewat testcontainers (Postgres + Redis sungguhan)
 
 ✅ **Frontend — SELESAI (repo terpisah):**
@@ -168,6 +169,17 @@ Relasi:
 | Method | Endpoint | Auth | Deskripsi |
 |---|---|---|---|
 | GET | `/api/search?q=&type=&limit=&offset=` | - | Cari lagu/artist/album/playlist; hasil dikelompokkan per tipe; tahan typo |
+
+### Library
+| Method | Endpoint | Auth | Deskripsi |
+|---|---|---|---|
+| PUT/DELETE | `/api/me/tracks/:songId` | JWT | Simpan/hapus lagu dari library (idempoten) |
+| GET | `/api/me/tracks` | JWT | Lagu tersimpan, terbaru dulu |
+| GET | `/api/me/tracks/contains?ids=` | JWT | Status simpan per id |
+| PUT/DELETE | `/api/me/albums/:albumId` | JWT | Simpan/hapus album |
+| GET | `/api/me/albums` + `/contains` | JWT | Daftar & status album tersimpan |
+| PUT/DELETE | `/api/me/following/:artistId` | JWT | Ikuti/berhenti mengikuti artist |
+| GET | `/api/me/following` + `/contains` | JWT | Daftar & status artist diikuti |
 
 ---
 

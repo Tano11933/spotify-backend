@@ -462,6 +462,29 @@ anonim juga.
 > informasi. Untuk operasi tulis, `403` memang dipakai: pemanggil sudah
 > menunjukkan niat mengubah sesuatu yang spesifik, dan pesan jelas lebih berguna.
 
+### Library (perlu login)
+
+Pustaka pribadi user: lagu disimpan, album disimpan, dan artist yang diikuti.
+Semua endpoint selalu bekerja pada user yang sedang login — tidak ada parameter
+user di path, jadi tidak ada permukaan untuk IDOR.
+
+| Method | Endpoint | Keterangan |
+|---|---|---|
+| PUT/DELETE | `/api/me/tracks/:songId` | Simpan / hapus lagu (idempoten, selalu `200`) |
+| GET | `/api/me/tracks?limit=&offset=` | Lagu tersimpan, terbaru disimpan lebih dulu |
+| GET | `/api/me/tracks/contains?ids=1,2` | `{"1": true, "2": false}` — untuk ikon hati tanpa N+1 |
+| PUT/DELETE | `/api/me/albums/:albumId` | Simpan / hapus album |
+| GET | `/api/me/albums` + `/albums/contains?ids=` | Daftar & status album tersimpan |
+| PUT/DELETE | `/api/me/following/:artistId` | Ikuti / berhenti mengikuti artist |
+| GET | `/api/me/following` + `/following/contains?ids=` | Daftar & status artist yang diikuti |
+
+- Menyimpan item yang tidak ada → `404`; menyimpan dua kali atau menghapus yang
+  tidak tersimpan tetap `200` (idempoten, aman untuk retry UI).
+- `contains` mengembalikan **semua** id yang diminta — yang tidak tersimpan ikut
+  muncul dengan nilai `false` — maksimum 100 id.
+- Foreign key memakai `ON DELETE CASCADE`: lagu/album/artist yang dihapus admin
+  otomatis hilang dari library semua user.
+
 ### Search
 
 | Method | Endpoint | Akses |
