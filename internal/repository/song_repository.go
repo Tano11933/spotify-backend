@@ -63,6 +63,30 @@ func (r *SongRepository) Exists(ctx context.Context, id uint) (bool, error) {
 	return count > 0, err
 }
 
+// FindByIDs memuat sekumpulan lagu beserta relasinya — dipakai riwayat putar
+// yang perlu menyusun ulang daftar lagu dari id yang tersimpan.
+func (r *SongRepository) FindByIDs(ctx context.Context, ids []uint) ([]model.Song, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	var songs []model.Song
+	err := r.db.WithContext(ctx).
+		Preload("Artist").
+		Preload("Album").
+		Where("id IN ?", ids).
+		Find(&songs).Error
+	return songs, err
+}
+
+// UpdateAudioKey mencatat lokasi berkas audio hasil unggahan di storage.
+func (r *SongRepository) UpdateAudioKey(ctx context.Context, id uint, key string) error {
+	return r.db.WithContext(ctx).
+		Model(&model.Song{}).
+		Where("id = ?", id).
+		Update("audio_key", key).Error
+}
+
 func (r *SongRepository) FindPageByArtistID(ctx context.Context, artistID uint, limit, offset int) ([]model.Song, int64, error) {
 	var songs []model.Song
 	var total int64

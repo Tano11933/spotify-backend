@@ -21,6 +21,11 @@ const (
 
 type EventBroadcaster interface {
 	BroadcastEvent(eventType string, payload any)
+
+	// BroadcastUserEvent dipakai saat event punya pengirim (mis. song:playing
+	// dari endpoint REST play) — user_id ditempel hub dari argumen, bukan dari
+	// isi payload yang dikirim client.
+	BroadcastUserEvent(userID string, eventType string, payload any)
 }
 
 type SongService struct {

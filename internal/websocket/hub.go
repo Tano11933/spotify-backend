@@ -128,6 +128,13 @@ func (h *Hub) BroadcastEvent(eventType string, payload any) {
 	h.Publish(Event{Type: eventType, Payload: payload}, nil)
 }
 
+// BroadcastUserEvent mengirim event yang menyertakan identitas pengirim.
+// Dipakai endpoint REST play supaya client lain tetap tahu siapa yang
+// memutar — sebelumnya user_id ditempel oleh handler WebSocket.
+func (h *Hub) BroadcastUserEvent(userID string, eventType string, payload any) {
+	h.Publish(Event{Type: eventType, UserID: userID, Payload: payload}, nil)
+}
+
 func (h *Hub) Publish(event Event, exclude *Client) {
 	if event.At.IsZero() {
 		event.At = time.Now().UTC()
