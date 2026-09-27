@@ -70,6 +70,9 @@ Backend + frontend clone Spotify sederhana, fokus pada kualitas arsitektur dan b
 - Pagination envelope seragam + kode error machine-readable (`code`) di seluruh API
 - Pencarian katalog (tsvector + trigram, tahan typo) dengan migrasi SQL ringan
 - Library user: liked songs, album tersimpan, artist diikuti (FK cascade)
+- Playback server-side: state & posisi, antrean, riwayat putar, `play_count`,
+  dan endpoint `play` yang sekaligus broadcast ke WebSocket
+- Media: unggah audio (abstraksi storage) + streaming dengan HTTP Range
 - Integration test lewat testcontainers (Postgres + Redis sungguhan)
 
 ✅ **Frontend — SELESAI (repo terpisah):**
@@ -180,6 +183,22 @@ Relasi:
 | GET | `/api/me/albums` + `/contains` | JWT | Daftar & status album tersimpan |
 | PUT/DELETE | `/api/me/following/:artistId` | JWT | Ikuti/berhenti mengikuti artist |
 | GET | `/api/me/following` + `/contains` | JWT | Daftar & status artist diikuti |
+
+### Player
+| Method | Endpoint | Auth | Deskripsi |
+|---|---|---|---|
+| GET | `/api/me/player` | JWT | State pemutaran terakhir (lagu + posisi) |
+| PUT | `/api/me/player` | JWT | Sinkronkan posisi (tanpa mencatat riwayat) |
+| POST | `/api/me/player/play` | JWT | Mulai memutar: state + riwayat + play_count + broadcast |
+| GET/POST | `/api/me/player/queue` | JWT | Lihat / tambah antrean |
+| DELETE | `/api/me/player/queue/:songId` | JWT | Hapus lagu dari antrean |
+| GET | `/api/me/history` | JWT | Riwayat putar |
+
+### Media
+| Method | Endpoint | Auth | Deskripsi |
+|---|---|---|---|
+| POST | `/api/admin/songs/:id/audio` | Admin | Unggah berkas audio (multipart, maks 20MB) |
+| GET | `/api/stream/songs/:id` | - | Streaming audio dengan HTTP Range (206) |
 
 ---
 

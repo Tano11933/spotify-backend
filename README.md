@@ -164,6 +164,7 @@ docker run --rm -v "${PWD}:/app" -w /app golang:1.26 go test -race ./...
 | `SMTP_FROM_EMAIL` `SMTP_FROM_NAME` | — | — | Pengirim email |
 | `FRONTEND_URL` | — | — | Basis link reset password di email |
 | `CORS_ALLOWED_ORIGINS` | — | `http://localhost:5173,http://localhost:3000` | Origin yang boleh memanggil API dari browser, dipisah koma. **Tidak boleh `*`** — app menolak start |
+| `UPLOAD_DIR` | — | `./uploads` | Direktori penyimpanan berkas audio hasil unggahan |
 
 Format durasi mengikuti Go: `30s`, `15m`, `168h`, `5m30s`.
 
@@ -485,6 +486,40 @@ user di path, jadi tidak ada permukaan untuk IDOR.
 - Foreign key memakai `ON DELETE CASCADE`: lagu/album/artist yang dihapus admin
   otomatis hilang dari library semua user.
 
+### Player (perlu login)
+
+Playback state disimpan di server — resume lintas device, dan antrean tidak
+hilang saat tab ditutup.
+
+| Method | Endpoint | Keterangan |
+|---|---|---|
+| GET | `/api/me/player` | State terakhir: lagu + posisi (`200` dengan `song: null` kalau belum ada) |
+| PUT | `/api/me/player` | Sinkronkan posisi `{song_id, position_seconds}` — **tidak** mencatat riwayat |
+| POST | `/api/me/player/play` | Mulai memutar: state + riwayat + `play_count` + broadcast WS `song:playing` |
+| GET | `/api/me/player/queue` | Antrean "next up" (envelope) |
+| POST | `/api/me/player/queue` | Tambah lagu ke akhir antrean `{song_id}` |
+| DELETE | `/api/me/player/queue/:songId` | Hapus kemunculan pertama lagu (idempoten) |
+| GET | `/api/me/history` | Riwayat putar `{played_at, song}`, terbaru dulu |
+
+> Pesan WebSocket `song:playing` dari client masih didukung demi kompatibilitas,
+> tapi `POST /api/me/player/play` adalah jalur yang disarankan: satu request
+> menangani state, riwayat, penghitung putar, dan broadcast sekaligus.
+
+### Media (audio)
+
+| Method | Endpoint | Akses | Keterangan |
+|---|---|---|---|
+| POST | `/api/admin/songs/:id/audio` | 👑 | Unggah berkas audio (multipart, field `file`). Format: `.mp3` `.wav` `.ogg` `.m4a` `.aac`, maks 20MB |
+| GET | `/api/stream/songs/:id` | 🌐 | Streaming audio dengan **HTTP Range** (`206`) — wajib agar `<audio>` bisa seek |
+
+- Berkas disimpan lewat abstraksi `pkg/storage` (disk lokal di `UPLOAD_DIR`);
+  berpindah ke S3/MinIO cukup menambah implementasi baru tanpa menyentuh service.
+- Stream sengaja publik: elemen `<audio>` tidak bisa memasang header
+  `Authorization` — trade-off yang sama dengan `?token=` pada WebSocket.
+- Lagu tanpa berkas unggahan (data seeder) → `302` dialihkan ke `file_url`-nya.
+- `BodyLimit` server dinaikkan ke 21MB (dari 1MB) karena endpoint upload;
+  endpoint JSON tetap dijaga validasi + `ReadTimeout` 15 detik.
+
 ### Search
 
 | Method | Endpoint | Akses |
@@ -634,7 +669,8 @@ envelope pagination, kode error, dan pencarian (termasuk typo).
 - Redis Pub/Sub sebagai broker WebSocket — hub in-memory tidak sinkron kalau
   backend di-scale ke beberapa instance
 - Handler layer belum punya unit test (dengan service tiruan)
-- Upload file audio (asumsi file sudah tersedia via URL eksternal)
 - Docker full-stack demo (`Dockerfile` backend & frontend +
   `docker-compose.prod.yml`) — lihat `DOCKER.md`
 - Cursor pagination untuk feed/history (list katalog sudah offset-based)
+- Pipeline media lanjutan: resize gambar cover/avatar & ekstraksi metadata
+  audio (durasi/BPM) dari berkas yang diunggah
