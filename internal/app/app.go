@@ -24,10 +24,17 @@ import (
 	ws "spotify-backend/internal/websocket"
 	"spotify-backend/pkg/cache"
 	jwtpkg "spotify-backend/pkg/jwt"
+	"spotify-backend/pkg/storage"
 )
 
 const (
-	defaultBodyLimit    = 1 * 1024 * 1024
+	// BodyLimit lebih besar dari ukuran berkas maksimum karena body multipart
+	// menambahkan boundary + header di sekitar berkas. BodyLimit berlaku
+	// server-wide (Fiber meneruskannya ke MaxRequestBodySize fasthttp) — batas
+	// per endpoint JSON tetap dijaga validasi ukuran muatan.
+	defaultBodyLimit     = 21 * 1024 * 1024
+	defaultMaxUploadSize = 20 * 1024 * 1024
+
 	defaultReadTimeout  = 15 * time.Second
 	defaultWriteTimeout = 15 * time.Second
 )
@@ -49,6 +56,13 @@ type Config struct {
 	FrontendURL string
 	CORSOrigins string
 	Mailer      service.Mailer
+
+	// StorageDir adalah direktori penyimpanan berkas unggahan (audio).
+	// Kosong berarti "./uploads".
+	StorageDir string
+
+	// MaxUploadBytes membatasi ukuran satu berkas audio. Kosong berarti 20MB.
+	MaxUploadBytes int64
 
 	BodyLimit    int
 	ReadTimeout  time.Duration
@@ -83,11 +97,24 @@ func New(cfg Config) (*App, error) {
 	if cfg.WriteTimeout == 0 {
 		cfg.WriteTimeout = defaultWriteTimeout
 	}
+	if cfg.StorageDir == "" {
+		cfg.StorageDir = "./uploads"
+	}
+	if cfg.MaxUploadBytes == 0 {
+		cfg.MaxUploadBytes = defaultMaxUploadSize
+	}
 
 	// Hub harus jalan sebagai goroutine terpisah dan dibuat SEBELUM service,
 	// karena SongService menerimanya sebagai dependency untuk broadcast.
 	hub := ws.NewHub()
 	go hub.Run()
+
+	// Storage menulis ke disk lokal. Ganti implementasinya (mis. S3/MinIO)
+	// tanpa menyentuh service — semuanya lewat interface storage.Storage.
+	fileStorage, err := storage.NewLocal(cfg.StorageDir)
+	if err != nil {
+		return nil, fmt.Errorf("app: %w", err)
+	}
 
 	jwtManager := jwtpkg.NewManager(
 		cfg.JWTSecret,
@@ -107,6 +134,7 @@ func New(cfg Config) (*App, error) {
 	playlistRepo := repository.NewPlaylistRepository(cfg.DB)
 	searchRepo := repository.NewSearchRepository(cfg.DB)
 	libraryRepo := repository.NewLibraryRepository(cfg.DB)
+	playerRepo := repository.NewPlayerRepository(cfg.DB)
 
 	authService := service.NewAuthService(userRepo, tokenRepo, jwtManager, mailService, cfg.ResetTokenTTL)
 	artistService := service.NewArtistService(artistRepo, cacheStore, cfg.CacheTTL)
@@ -115,6 +143,8 @@ func New(cfg Config) (*App, error) {
 	playlistService := service.NewPlaylistService(playlistRepo, songRepo)
 	searchService := service.NewSearchService(searchRepo)
 	libraryService := service.NewLibraryService(libraryRepo, songRepo, albumRepo, artistRepo)
+	playerService := service.NewPlayerService(playerRepo, songRepo, hub)
+	mediaService := service.NewMediaService(songRepo, fileStorage, cfg.MaxUploadBytes)
 
 	h := &router.Handlers{
 		Artist:   handler.NewArtistHandler(artistService),
@@ -124,6 +154,8 @@ func New(cfg Config) (*App, error) {
 		Playlist: handler.NewPlaylistHandler(playlistService),
 		Search:   handler.NewSearchHandler(searchService),
 		Library:  handler.NewLibraryHandler(libraryService),
+		Player:   handler.NewPlayerHandler(playerService),
+		Media:    handler.NewMediaHandler(mediaService),
 		WS:       handler.NewWSHandler(hub, songService),
 	}
 
@@ -169,6 +201,10 @@ func (a *App) Migrate() error {
 		&model.SavedTrack{},
 		&model.SavedAlbum{},
 		&model.FollowedArtist{},
+		// Tabel playback: bergantung pada User dan Song.
+		&model.PlayerState{},
+		&model.QueueItem{},
+		&model.PlayHistory{},
 	); err != nil {
 		return err
 	}

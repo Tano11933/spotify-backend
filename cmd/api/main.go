@@ -52,6 +52,7 @@ func main() {
 		FrontendURL: os.Getenv("FRONTEND_URL"),
 		CORSOrigins: origins,
 		Mailer:      buildMailer(),
+		StorageDir:  os.Getenv("UPLOAD_DIR"),
 	})
 	if err != nil {
 		log.Fatal("Failed to build app: ", err)

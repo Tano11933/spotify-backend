@@ -17,6 +17,8 @@ type Handlers struct {
 	Playlist *handler.PlaylistHandler
 	Search   *handler.SearchHandler
 	Library  *handler.LibraryHandler
+	Player   *handler.PlayerHandler
+	Media    *handler.MediaHandler
 	WS       *handler.WSHandler
 }
 
@@ -36,6 +38,8 @@ func SetupRoutes(app *fiber.App, h *Handlers, mw *Middlewares) {
 	registerCatalogRoutes(api, h, mw)
 	registerPlaylistRoutes(api, h, mw)
 	registerLibraryRoutes(api, h, mw)
+	registerPlayerRoutes(api, h, mw)
+	registerMediaRoutes(api, h, mw)
 	registerSearchRoutes(api, h)
 	registerWebSocketRoute(app, h, mw)
 }
@@ -211,6 +215,36 @@ func registerLibraryRoutes(api fiber.Router, h *Handlers, mw *Middlewares) {
 	me.Delete("/following/:artistId", h.Library.UnfollowArtist)
 	me.Get("/following", h.Library.GetFollowing)
 	me.Get("/following/contains", h.Library.FollowingContain)
+}
+
+// registerPlayerRoutes mendaftarkan playback: state, antrean, riwayat, dan
+// endpoint "play" yang mencatat semuanya sekaligus.
+func registerPlayerRoutes(api fiber.Router, h *Handlers, mw *Middlewares) {
+	me := api.Group("/me", mw.Auth.Protected())
+
+	me.Get("/player", h.Player.GetState)
+	me.Put("/player", h.Player.UpdateState)
+	me.Post("/player/play", h.Player.Play)
+
+	me.Get("/player/queue", h.Player.GetQueue)
+	me.Post("/player/queue", h.Player.AddToQueue)
+	me.Delete("/player/queue/:songId", h.Player.RemoveFromQueue)
+
+	me.Get("/history", h.Player.GetHistory)
+}
+
+// registerMediaRoutes mendaftarkan unggah audio (admin) dan streaming.
+//
+// Stream sengaja PUBLIK — lihat catatan di MediaHandler.Stream: elemen <audio>
+// tidak bisa memasang header Authorization.
+func registerMediaRoutes(api fiber.Router, h *Handlers, mw *Middlewares) {
+	api.Get("/stream/songs/:id", h.Media.Stream)
+
+	api.Post("/admin/songs/:id/audio",
+		mw.Auth.Protected(),
+		mw.Auth.RequireAdmin(),
+		h.Media.UploadAudio,
+	)
 }
 
 // registerSearchRoutes mendaftarkan pencarian katalog.
