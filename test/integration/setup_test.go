@@ -102,6 +102,14 @@ func TestMain(m *testing.M) {
 	}
 	rdb := redis.NewClient(&redis.Options{Addr: redisAddr})
 
+	// Direktori upload sementara — dibersihkan otomatis oleh OS.
+	uploadDir, err := os.MkdirTemp("", "spotify-uploads-*")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "gagal membuat direktori upload sementara:", err)
+		os.Exit(1)
+	}
+	defer func() { _ = os.RemoveAll(uploadDir) }()
+
 	testApp, err = app.New(app.Config{
 		DB:    db,
 		Redis: rdb,
@@ -117,6 +125,7 @@ func TestMain(m *testing.M) {
 		FrontendURL: "http://localhost:5173",
 		CORSOrigins: "http://localhost:5173",
 		Mailer:      silentMailer{},
+		StorageDir:  uploadDir,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "gagal merakit aplikasi:", err)
