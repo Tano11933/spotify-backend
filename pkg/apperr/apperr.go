@@ -18,5 +18,6 @@ const (
 	CodeConflict        Code = "CONFLICT"
 	CodeRateLimited     Code = "RATE_LIMITED"
 	CodeUpgradeRequired Code = "UPGRADE_REQUIRED"
+	CodePayloadTooLarge Code = "PAYLOAD_TOO_LARGE"
 	CodeInternal        Code = "INTERNAL"
 )

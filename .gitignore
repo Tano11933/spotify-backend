@@ -15,6 +15,9 @@
 # Go vendor (kalau nggak pakai vendoring)
 vendor/
 
+# Berkas audio hasil unggahan (jangan ikut di-commit)
+uploads/
+
 # IDE
 .vscode/
 .idea/
