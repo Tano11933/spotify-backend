@@ -19,6 +19,7 @@ type Handlers struct {
 	Library  *handler.LibraryHandler
 	Player   *handler.PlayerHandler
 	Media    *handler.MediaHandler
+	Social   *handler.SocialHandler
 	WS       *handler.WSHandler
 }
 
@@ -38,6 +39,7 @@ func SetupRoutes(app *fiber.App, h *Handlers, mw *Middlewares) {
 	registerCatalogRoutes(api, h, mw)
 	registerPlaylistRoutes(api, h, mw)
 	registerLibraryRoutes(api, h, mw)
+	registerSocialRoutes(api, h, mw)
 	registerPlayerRoutes(api, h, mw)
 	registerMediaRoutes(api, h, mw)
 	registerSearchRoutes(api, h)
@@ -215,6 +217,20 @@ func registerLibraryRoutes(api fiber.Router, h *Handlers, mw *Middlewares) {
 	me.Delete("/following/:artistId", h.Library.UnfollowArtist)
 	me.Get("/following", h.Library.GetFollowing)
 	me.Get("/following/contains", h.Library.FollowingContain)
+}
+
+// registerSocialRoutes mendaftarkan profil publik dan relasi follow antar
+// user. Profil dan daftar bisa dibuka anonim; follow/unfollow butuh login.
+func registerSocialRoutes(api fiber.Router, h *Handlers, mw *Middlewares) {
+	users := api.Group("/users")
+
+	users.Get("/:id", mw.Auth.Optional(), h.Social.GetProfile)
+	users.Get("/:id/followers", h.Social.GetFollowers)
+	users.Get("/:id/following", h.Social.GetFollowing)
+	users.Get("/:id/playlists", h.Social.GetPlaylists)
+
+	users.Put("/:id/follow", mw.Auth.Protected(), h.Social.Follow)
+	users.Delete("/:id/follow", mw.Auth.Protected(), h.Social.Unfollow)
 }
 
 // registerPlayerRoutes mendaftarkan playback: state, antrean, riwayat, dan

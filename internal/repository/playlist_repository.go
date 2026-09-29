@@ -81,6 +81,41 @@ func (r *PlaylistRepository) FindPagePublic(ctx context.Context, limit, offset i
 	return playlists, total, err
 }
 
+// FindPagePublicByUser mengembalikan playlist publik MILIK satu user, dipakai
+// halaman profil publik. Songs sengaja tidak di-preload: daftar playlist di
+// profil cukup menampilkan nama & pemiliknya.
+func (r *PlaylistRepository) FindPagePublicByUser(ctx context.Context, userID uuid.UUID, limit, offset int) ([]model.Playlist, int64, error) {
+	var playlists []model.Playlist
+	var total int64
+
+	if err := r.db.WithContext(ctx).
+		Model(&model.Playlist{}).
+		Where("user_id = ? AND is_public = ?", userID, true).
+		Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	err := r.db.WithContext(ctx).
+		Preload("User").
+		Where("user_id = ? AND is_public = ?", userID, true).
+		Order("created_at DESC").
+		Limit(limit).
+		Offset(offset).
+		Find(&playlists).Error
+	return playlists, total, err
+}
+
+// CountPublicByUser menghitung playlist publik milik user, dipakai statistik
+// pada profil publik.
+func (r *PlaylistRepository) CountPublicByUser(ctx context.Context, userID uuid.UUID) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).
+		Model(&model.Playlist{}).
+		Where("user_id = ? AND is_public = ?", userID, true).
+		Count(&count).Error
+	return count, err
+}
+
 func (r *PlaylistRepository) Update(ctx context.Context, playlist *model.Playlist) error {
 	return r.db.WithContext(ctx).Omit(clause.Associations).Save(playlist).Error
 }

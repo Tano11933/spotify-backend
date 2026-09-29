@@ -32,6 +32,35 @@ func (m *AuthMiddleware) ProtectedAllowQueryToken() fiber.Handler {
 	return m.protect(true)
 }
 
+// Optional memvalidasi token kalau ada, tapi membiarkan request tanpa token
+// lewat sebagai anonim. Dipakai endpoint publik yang tampilannya berubah untuk
+// user login, misalnya `is_following` di profil publik. Token yang ADA tapi
+// tidak valid tetap ditolak 401, supaya client tahu kredensialnya kedaluwarsa
+// alih-alih diam-diam diperlakukan sebagai anonim.
+func (m *AuthMiddleware) Optional() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		raw := bearerToken(c.Get(fiber.HeaderAuthorization))
+		if raw == "" {
+			return c.Next()
+		}
+
+		claims, err := m.jwt.ParseAccessToken(raw)
+		if err != nil {
+			return response.Unauthorized(c, "invalid or expired token")
+		}
+
+		userID, err := claims.UserID()
+		if err != nil {
+			return response.Unauthorized(c, "invalid or expired token")
+		}
+
+		c.Locals(ContextUserID, userID)
+		c.Locals(ContextUserRole, claims.Role)
+
+		return c.Next()
+	}
+}
+
 func (m *AuthMiddleware) protect(allowQueryToken bool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		raw := bearerToken(c.Get(fiber.HeaderAuthorization))

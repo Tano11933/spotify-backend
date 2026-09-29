@@ -135,6 +135,7 @@ func New(cfg Config) (*App, error) {
 	searchRepo := repository.NewSearchRepository(cfg.DB)
 	libraryRepo := repository.NewLibraryRepository(cfg.DB)
 	playerRepo := repository.NewPlayerRepository(cfg.DB)
+	followRepo := repository.NewFollowRepository(cfg.DB)
 
 	authService := service.NewAuthService(userRepo, tokenRepo, jwtManager, mailService, cfg.ResetTokenTTL)
 	artistService := service.NewArtistService(artistRepo, cacheStore, cfg.CacheTTL)
@@ -145,6 +146,7 @@ func New(cfg Config) (*App, error) {
 	libraryService := service.NewLibraryService(libraryRepo, songRepo, albumRepo, artistRepo)
 	playerService := service.NewPlayerService(playerRepo, songRepo, hub)
 	mediaService := service.NewMediaService(songRepo, fileStorage, cfg.MaxUploadBytes)
+	socialService := service.NewSocialService(followRepo, userRepo, playlistRepo)
 
 	h := &router.Handlers{
 		Artist:   handler.NewArtistHandler(artistService),
@@ -156,6 +158,7 @@ func New(cfg Config) (*App, error) {
 		Library:  handler.NewLibraryHandler(libraryService),
 		Player:   handler.NewPlayerHandler(playerService),
 		Media:    handler.NewMediaHandler(mediaService),
+		Social:   handler.NewSocialHandler(socialService),
 		WS:       handler.NewWSHandler(hub, songService),
 	}
 
@@ -205,6 +208,8 @@ func (a *App) Migrate() error {
 		&model.PlayerState{},
 		&model.QueueItem{},
 		&model.PlayHistory{},
+		// Relasi sosial antar user.
+		&model.UserFollow{},
 	); err != nil {
 		return err
 	}
