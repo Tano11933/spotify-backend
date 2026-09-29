@@ -7,7 +7,10 @@ services:
       POSTGRES_PASSWORD: spotify123
       POSTGRES_DB: spotify_db
     ports:
-      - "5432:5432"
+      # Port HOST mengikuti DB_PORT di .env (default 5432). Port container
+      # tetap 5432. Kalau 5432 sudah dipakai Postgres lain di komputermu,
+      # cukup ubah DB_PORT di .env dan jalankan ulang compose.
+      - "${DB_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
@@ -15,7 +18,8 @@ services:
     image: redis:7-alpine
     container_name: spotify-redis
     ports:
-      - "6379:6379"
+      # Sama seperti postgres: port host mengikuti REDIS_PORT di .env.
+      - "${REDIS_PORT:-6379}:6379"
 
 volumes:
   postgres_data:
