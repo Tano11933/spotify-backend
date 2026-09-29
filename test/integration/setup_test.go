@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	tcredis "github.com/testcontainers/testcontainers-go/modules/redis"
@@ -45,6 +46,8 @@ var (
 	fixtureAlbumID    uint
 	fixtureSongID     uint
 	fixturePlaylistID uint
+	fixtureUserID     uuid.UUID
+	fixtureAdminID    uuid.UUID
 
 	// Cache access token per email. Endpoint login dibatasi 10 percobaan /
 	// 5 menit per IP — kalau setiap test login sendiri, suite integrasi
@@ -161,6 +164,8 @@ func seedFixture() error {
 	if err := db.Create(&user).Error; err != nil {
 		return err
 	}
+	fixtureAdminID = admin.ID
+	fixtureUserID = user.ID
 
 	alpha := model.Artist{Name: "Alpha", Bio: "artist fixture"}
 	beta := model.Artist{Name: "Beta"}
