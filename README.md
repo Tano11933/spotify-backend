@@ -79,6 +79,11 @@ docker compose up -d
 docker ps      # pastikan spotify-postgres dan spotify-redis berstatus Up
 ```
 
+> **Port 5432 sudah dipakai?** Instalasi Postgres native (mis. PostgreSQL 17 di
+> Windows) bertabrakan dengan container. Ubah `DB_PORT` di `.env` (langkah 2)
+> ke port bebas seperti `5433`, lalu jalankan ulang compose: port host mengikuti
+> nilai itu, port di dalam container tetap 5432.
+
 ### 2. Siapkan `.env`
 
 ```bash
@@ -485,6 +490,25 @@ user di path, jadi tidak ada permukaan untuk IDOR.
   muncul dengan nilai `false` — maksimum 100 id.
 - Foreign key memakai `ON DELETE CASCADE`: lagu/album/artist yang dihapus admin
   otomatis hilang dari library semua user.
+
+### Users & follows
+
+| Method | Endpoint | Akses | Keterangan |
+|---|---|---|---|
+| GET | `/api/users/:id` | 🌐 | Profil publik + statistik (followers, following, playlist publik). Token valid mengisi `is_following` |
+| GET | `/api/users/:id/followers` | 🌐 | Daftar pengikut (envelope) |
+| GET | `/api/users/:id/following` | 🌐 | Daftar yang diikuti (envelope) |
+| GET | `/api/users/:id/playlists` | 🌐 | Playlist publik milik user |
+| PUT | `/api/users/:id/follow` | 🔒 | Ikuti user (idempoten) |
+| DELETE | `/api/users/:id/follow` | 🔒 | Berhenti mengikuti (idempoten) |
+
+- **Email tidak pernah muncul** di endpoint ini: response memakai DTO `PublicUser`
+  (`id`, `name`, `created_at`), bukan model `User` yang memuat email.
+- Follow diri sendiri dibalas `422`, user tidak ada `404`. Aturan itu juga
+  ditegakkan database lewat `CHECK (follower_id <> followee_id)` di
+  `0004_user_follows.sql`.
+- Profil memakai middleware **auth opsional**: tanpa token tetap `200` dengan
+  `is_following: false`; token yang salah tetap ditolak `401`.
 
 ### Player (perlu login)
 

@@ -73,6 +73,7 @@ Backend + frontend clone Spotify sederhana, fokus pada kualitas arsitektur dan b
 - Playback server-side: state & posisi, antrean, riwayat putar, `play_count`,
   dan endpoint `play` yang sekaligus broadcast ke WebSocket
 - Media: unggah audio (abstraksi storage) + streaming dengan HTTP Range
+- Sosial: profil publik (tanpa email) + follow antar user (fondasi feed & notifikasi)
 - Integration test lewat testcontainers (Postgres + Redis sungguhan)
 
 ✅ **Frontend — SELESAI (repo terpisah):**
@@ -199,6 +200,14 @@ Relasi:
 |---|---|---|---|
 | POST | `/api/admin/songs/:id/audio` | Admin | Unggah berkas audio (multipart, maks 20MB) |
 | GET | `/api/stream/songs/:id` | - | Streaming audio dengan HTTP Range (206) |
+
+### Users & follows
+| Method | Endpoint | Auth | Deskripsi |
+|---|---|---|---|
+| GET | `/api/users/:id` | - | Profil publik + statistik; `is_following` terisi kalau membawa token |
+| GET | `/api/users/:id/followers` `/following` | - | Daftar pengikut / yang diikuti |
+| GET | `/api/users/:id/playlists` | - | Playlist publik milik user |
+| PUT/DELETE | `/api/users/:id/follow` | JWT | Ikuti / berhenti mengikuti (idempoten) |
 
 ---
 
