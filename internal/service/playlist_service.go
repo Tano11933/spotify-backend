@@ -23,13 +23,15 @@ var (
 type PlaylistService struct {
 	repo     *repository.PlaylistRepository
 	songRepo *repository.SongRepository
+	activity ActivityRecorder
 }
 
 func NewPlaylistService(
 	repo *repository.PlaylistRepository,
 	songRepo *repository.SongRepository,
+	activity ActivityRecorder,
 ) *PlaylistService {
-	return &PlaylistService{repo: repo, songRepo: songRepo}
+	return &PlaylistService{repo: repo, songRepo: songRepo, activity: activity}
 }
 
 func (s *PlaylistService) Create(
@@ -48,6 +50,12 @@ func (s *PlaylistService) Create(
 	if err := s.repo.Create(ctx, playlist); err != nil {
 		return nil, fmt.Errorf("create playlist: %w", err)
 	}
+
+	// Playlist pribadi tidak pernah muncul di feed; hanya yang publik.
+	if playlist.IsPublic && s.activity != nil {
+		s.activity.RecordPlaylistCreated(ctx, userID, playlist.ID)
+	}
+
 	return playlist, nil
 }
 

@@ -116,6 +116,20 @@ func (r *PlaylistRepository) CountPublicByUser(ctx context.Context, userID uuid.
 	return count, err
 }
 
+// FindByIDs memuat sekumpulan playlist sekaligus, dipakai feed aktivitas.
+func (r *PlaylistRepository) FindByIDs(ctx context.Context, ids []uint) ([]model.Playlist, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	var playlists []model.Playlist
+	err := r.db.WithContext(ctx).
+		Preload("User").
+		Where("id IN ?", ids).
+		Find(&playlists).Error
+	return playlists, err
+}
+
 func (r *PlaylistRepository) Update(ctx context.Context, playlist *model.Playlist) error {
 	return r.db.WithContext(ctx).Omit(clause.Associations).Save(playlist).Error
 }

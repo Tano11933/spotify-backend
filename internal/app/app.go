@@ -136,30 +136,37 @@ func New(cfg Config) (*App, error) {
 	libraryRepo := repository.NewLibraryRepository(cfg.DB)
 	playerRepo := repository.NewPlayerRepository(cfg.DB)
 	followRepo := repository.NewFollowRepository(cfg.DB)
+	activityRepo := repository.NewActivityRepository(cfg.DB)
+	notificationRepo := repository.NewNotificationRepository(cfg.DB)
 
 	authService := service.NewAuthService(userRepo, tokenRepo, jwtManager, mailService, cfg.ResetTokenTTL)
 	artistService := service.NewArtistService(artistRepo, cacheStore, cfg.CacheTTL)
 	albumService := service.NewAlbumService(albumRepo, artistRepo, cacheStore, cfg.CacheTTL)
 	songService := service.NewSongService(songRepo, artistRepo, cacheStore, hub)
-	playlistService := service.NewPlaylistService(playlistRepo, songRepo)
+	feedService := service.NewFeedService(activityRepo, userRepo, songRepo, playlistRepo)
+	notificationService := service.NewNotificationService(notificationRepo, userRepo, hub)
+
+	playlistService := service.NewPlaylistService(playlistRepo, songRepo, feedService)
 	searchService := service.NewSearchService(searchRepo)
 	libraryService := service.NewLibraryService(libraryRepo, songRepo, albumRepo, artistRepo)
-	playerService := service.NewPlayerService(playerRepo, songRepo, hub)
+	playerService := service.NewPlayerService(playerRepo, songRepo, hub, feedService)
 	mediaService := service.NewMediaService(songRepo, fileStorage, cfg.MaxUploadBytes)
-	socialService := service.NewSocialService(followRepo, userRepo, playlistRepo)
+	socialService := service.NewSocialService(followRepo, userRepo, playlistRepo, notificationService)
 
 	h := &router.Handlers{
-		Artist:   handler.NewArtistHandler(artistService),
-		Song:     handler.NewSongHandler(songService),
-		Album:    handler.NewAlbumHandler(albumService),
-		Auth:     handler.NewAuthHandler(authService),
-		Playlist: handler.NewPlaylistHandler(playlistService),
-		Search:   handler.NewSearchHandler(searchService),
-		Library:  handler.NewLibraryHandler(libraryService),
-		Player:   handler.NewPlayerHandler(playerService),
-		Media:    handler.NewMediaHandler(mediaService),
-		Social:   handler.NewSocialHandler(socialService),
-		WS:       handler.NewWSHandler(hub, songService),
+		Artist:       handler.NewArtistHandler(artistService),
+		Song:         handler.NewSongHandler(songService),
+		Album:        handler.NewAlbumHandler(albumService),
+		Auth:         handler.NewAuthHandler(authService),
+		Playlist:     handler.NewPlaylistHandler(playlistService),
+		Search:       handler.NewSearchHandler(searchService),
+		Library:      handler.NewLibraryHandler(libraryService),
+		Player:       handler.NewPlayerHandler(playerService),
+		Media:        handler.NewMediaHandler(mediaService),
+		Social:       handler.NewSocialHandler(socialService),
+		Feed:         handler.NewFeedHandler(feedService),
+		Notification: handler.NewNotificationHandler(notificationService),
+		WS:           handler.NewWSHandler(hub, songService),
 	}
 
 	mw := &router.Middlewares{
@@ -210,6 +217,9 @@ func (a *App) Migrate() error {
 		&model.PlayHistory{},
 		// Relasi sosial antar user.
 		&model.UserFollow{},
+		// Feed aktivitas & notifikasi.
+		&model.Activity{},
+		&model.Notification{},
 	); err != nil {
 		return err
 	}

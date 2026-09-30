@@ -31,14 +31,16 @@ type PlayerService struct {
 	repo        *repository.PlayerRepository
 	songRepo    *repository.SongRepository
 	broadcaster EventBroadcaster
+	activity    ActivityRecorder
 }
 
 func NewPlayerService(
 	repo *repository.PlayerRepository,
 	songRepo *repository.SongRepository,
 	broadcaster EventBroadcaster,
+	activity ActivityRecorder,
 ) *PlayerService {
-	return &PlayerService{repo: repo, songRepo: songRepo, broadcaster: broadcaster}
+	return &PlayerService{repo: repo, songRepo: songRepo, broadcaster: broadcaster, activity: activity}
 }
 
 /* -------------------------------------------------------------------------
@@ -108,6 +110,11 @@ func (s *PlayerService) Play(ctx context.Context, userID uuid.UUID, songID uint)
 	}
 	if err := s.repo.IncrementPlayCount(ctx, songID); err != nil {
 		return nil, err
+	}
+
+	// Catat ke feed teman; kegagalan mencatat tidak membatalkan pemutaran.
+	if s.activity != nil {
+		s.activity.RecordSongPlayed(ctx, userID, songID)
 	}
 
 	if s.broadcaster != nil {

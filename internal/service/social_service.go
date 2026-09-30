@@ -39,14 +39,21 @@ type SocialService struct {
 	followRepo   *repository.FollowRepository
 	userRepo     *repository.UserRepository
 	playlistRepo *repository.PlaylistRepository
+	notifier     FollowNotifier
 }
 
 func NewSocialService(
 	followRepo *repository.FollowRepository,
 	userRepo *repository.UserRepository,
 	playlistRepo *repository.PlaylistRepository,
+	notifier FollowNotifier,
 ) *SocialService {
-	return &SocialService{followRepo: followRepo, userRepo: userRepo, playlistRepo: playlistRepo}
+	return &SocialService{
+		followRepo:   followRepo,
+		userRepo:     userRepo,
+		playlistRepo: playlistRepo,
+		notifier:     notifier,
+	}
 }
 
 // GetProfile merakit profil publik beserta statistiknya. viewerID boleh nil
@@ -105,7 +112,18 @@ func (s *SocialService) Follow(ctx context.Context, followerID, followeeID uuid.
 		return err
 	}
 
-	return s.followRepo.Follow(ctx, followerID, followeeID)
+	created, err := s.followRepo.Follow(ctx, followerID, followeeID)
+	if err != nil {
+		return err
+	}
+
+	// Hanya follow BARU yang memicu notifikasi; mengulang PUT follow tidak
+	// boleh menambah notifikasi duplikat di sisi penerima.
+	if created && s.notifier != nil {
+		s.notifier.NotifyFollow(ctx, followeeID, followerID)
+	}
+
+	return nil
 }
 
 func (s *SocialService) Unfollow(ctx context.Context, followerID, followeeID uuid.UUID) error {

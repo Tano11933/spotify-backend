@@ -20,18 +20,24 @@ func NewFollowRepository(db *gorm.DB) *FollowRepository {
 	return &FollowRepository{db: db}
 }
 
-// Follow menyimpan relasi follow. ON CONFLICT DO NOTHING membuat follow dua
-// kali tidak error, sama seperti pola idempoten di library.
-func (r *FollowRepository) Follow(ctx context.Context, followerID, followeeID uuid.UUID) error {
+// Follow menyimpan relasi follow dan melaporkan apakah barisnya BARU dibuat.
+// Pemanggil memakai nilai itu untuk tidak mengirim notifikasi duplikat saat
+// follow diulang (operasinya sendiri tetap idempoten).
+func (r *FollowRepository) Follow(ctx context.Context, followerID, followeeID uuid.UUID) (bool, error) {
 	entry := model.UserFollow{
 		FollowerID: followerID,
 		FolloweeID: followeeID,
 		CreatedAt:  time.Now().UTC(),
 	}
 
-	return r.db.WithContext(ctx).
+	result := r.db.WithContext(ctx).
 		Clauses(clause.OnConflict{DoNothing: true}).
-		Create(&entry).Error
+		Create(&entry)
+	if result.Error != nil {
+		return false, result.Error
+	}
+
+	return result.RowsAffected > 0, nil
 }
 
 func (r *FollowRepository) Unfollow(ctx context.Context, followerID, followeeID uuid.UUID) error {

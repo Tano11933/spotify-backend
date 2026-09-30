@@ -56,6 +56,18 @@ func (r *UserRepository) ExistsByEmail(ctx context.Context, email string) (bool,
 	return count > 0, nil
 }
 
+// FindByIDs memuat sekumpulan user sekaligus, dipakai feed & notifikasi yang
+// perlu merakit nama actor tanpa query per baris.
+func (r *UserRepository) FindByIDs(ctx context.Context, ids []uuid.UUID) ([]model.User, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	var users []model.User
+	err := r.db.WithContext(ctx).Where("id IN ?", ids).Find(&users).Error
+	return users, err
+}
+
 func (r *UserRepository) UpdatePassword(ctx context.Context, id uuid.UUID, passwordHash string) error {
 	result := r.db.WithContext(ctx).
 		Model(&model.User{}).

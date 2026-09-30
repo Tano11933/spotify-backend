@@ -10,17 +10,19 @@ import (
 )
 
 type Handlers struct {
-	Artist   *handler.ArtistHandler
-	Song     *handler.SongHandler
-	Album    *handler.AlbumHandler
-	Auth     *handler.AuthHandler
-	Playlist *handler.PlaylistHandler
-	Search   *handler.SearchHandler
-	Library  *handler.LibraryHandler
-	Player   *handler.PlayerHandler
-	Media    *handler.MediaHandler
-	Social   *handler.SocialHandler
-	WS       *handler.WSHandler
+	Artist       *handler.ArtistHandler
+	Song         *handler.SongHandler
+	Album        *handler.AlbumHandler
+	Auth         *handler.AuthHandler
+	Playlist     *handler.PlaylistHandler
+	Search       *handler.SearchHandler
+	Library      *handler.LibraryHandler
+	Player       *handler.PlayerHandler
+	Media        *handler.MediaHandler
+	Social       *handler.SocialHandler
+	Feed         *handler.FeedHandler
+	Notification *handler.NotificationHandler
+	WS           *handler.WSHandler
 }
 
 type Middlewares struct {
@@ -40,6 +42,7 @@ func SetupRoutes(app *fiber.App, h *Handlers, mw *Middlewares) {
 	registerPlaylistRoutes(api, h, mw)
 	registerLibraryRoutes(api, h, mw)
 	registerSocialRoutes(api, h, mw)
+	registerNotificationRoutes(api, h, mw)
 	registerPlayerRoutes(api, h, mw)
 	registerMediaRoutes(api, h, mw)
 	registerSearchRoutes(api, h)
@@ -231,6 +234,19 @@ func registerSocialRoutes(api fiber.Router, h *Handlers, mw *Middlewares) {
 
 	users.Put("/:id/follow", mw.Auth.Protected(), h.Social.Follow)
 	users.Delete("/:id/follow", mw.Auth.Protected(), h.Social.Unfollow)
+
+	// Feed aktivitas teman untuk user yang sedang login.
+	me := api.Group("/me", mw.Auth.Protected())
+	me.Get("/feed", h.Feed.GetFeed)
+}
+
+// registerNotificationRoutes mendaftarkan notifikasi in-app milik user yang
+// login. Pengiriman real-time-nya lewat WebSocket tertarget, bukan broadcast.
+func registerNotificationRoutes(api fiber.Router, h *Handlers, mw *Middlewares) {
+	me := api.Group("/me", mw.Auth.Protected())
+
+	me.Get("/notifications", h.Notification.GetMine)
+	me.Post("/notifications/read", h.Notification.MarkAllRead)
 }
 
 // registerPlayerRoutes mendaftarkan playback: state, antrean, riwayat, dan

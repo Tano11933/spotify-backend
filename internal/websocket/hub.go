@@ -10,9 +10,9 @@ import (
 )
 
 const (
-	writeWait = 10 * time.Second
-	pongWait = 60 * time.Second
-	pingInterval = (pongWait * 9) / 10
+	writeWait      = 10 * time.Second
+	pongWait       = 60 * time.Second
+	pingInterval   = (pongWait * 9) / 10
 	maxMessageSize = 4096
 	sendBufferSize = 16
 )
@@ -46,15 +46,21 @@ type Client struct {
 
 func (c *Client) UserID() uuid.UUID { return c.userID }
 
-// broadcastRequest adalah pesan internal ke loop hub.
+// broadcastRequest adalah pesan internal ke loop hub. `to` nil berarti
+// broadcast ke semua client; terisi berarti hanya ke client milik user itu.
 type broadcastRequest struct {
 	data []byte
 
 	exclude *Client
+	to      *uuid.UUID
 }
 
 type Hub struct {
+	// clients adalah daftar semua koneksi; byUser mengindeks koneksi yang sama
+	// per user supaya notifikasi bisa dikirim tertarget tanpa menyentuh client
+	// lain. Keduanya hanya disentuh goroutine Run.
 	clients map[*Client]struct{}
+	byUser  map[uuid.UUID]map[*Client]struct{}
 
 	register   chan *Client
 	unregister chan *Client
@@ -65,6 +71,7 @@ type Hub struct {
 func NewHub() *Hub {
 	return &Hub{
 		clients: make(map[*Client]struct{}),
+		byUser:  make(map[uuid.UUID]map[*Client]struct{}),
 
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
@@ -79,14 +86,15 @@ func (h *Hub) Run() {
 		select {
 		case client := <-h.register:
 			h.clients[client] = struct{}{}
+			if h.byUser[client.userID] == nil {
+				h.byUser[client.userID] = make(map[*Client]struct{})
+			}
+			h.byUser[client.userID][client] = struct{}{}
 			log.Printf("websocket: client connected (user=%s, total=%d)", client.userID, len(h.clients))
 
 		case client := <-h.unregister:
 			if _, ok := h.clients[client]; ok {
-				delete(h.clients, client)
-
-				close(client.send)
-
+				h.removeClient(client)
 				log.Printf("websocket: client disconnected (user=%s, total=%d)", client.userID, len(h.clients))
 			}
 
@@ -96,8 +104,9 @@ func (h *Hub) Run() {
 		case <-h.done:
 			for client := range h.clients {
 				close(client.send)
-				delete(h.clients, client)
 			}
+			h.clients = make(map[*Client]struct{})
+			h.byUser = make(map[uuid.UUID]map[*Client]struct{})
 			log.Println("websocket: hub stopped")
 			return
 		}
@@ -105,19 +114,49 @@ func (h *Hub) Run() {
 }
 
 func (h *Hub) dispatch(req broadcastRequest) {
+	if req.to != nil {
+		for client := range h.byUser[*req.to] {
+			h.sendTo(client, req.data)
+		}
+		return
+	}
+
 	for client := range h.clients {
 		if client == req.exclude {
 			continue
 		}
+		h.sendTo(client, req.data)
+	}
+}
 
-		select {
-		case client.send <- req.data:
-		default:
-			log.Printf("websocket: dropping slow client (user=%s)", client.userID)
-			delete(h.clients, client)
-			close(client.send)
+// sendTo mengirim satu pesan ke satu client. Non-blocking: client yang
+// antreannya penuh dibuang supaya tidak membekukan seluruh broadcast.
+func (h *Hub) sendTo(client *Client, data []byte) {
+	select {
+	case client.send <- data:
+	default:
+		log.Printf("websocket: dropping slow client (user=%s)", client.userID)
+		h.removeClient(client)
+	}
+}
+
+// removeClient menghapus client dari kedua indeks dan menutup channel
+// pengirimannya. Dipanggil hanya dari goroutine Run.
+func (h *Hub) removeClient(client *Client) {
+	if _, ok := h.clients[client]; !ok {
+		return
+	}
+
+	delete(h.clients, client)
+
+	if peers, ok := h.byUser[client.userID]; ok {
+		delete(peers, client)
+		if len(peers) == 0 {
+			delete(h.byUser, client.userID)
 		}
 	}
+
+	close(client.send)
 }
 
 func (h *Hub) Stop() {
@@ -133,6 +172,24 @@ func (h *Hub) BroadcastEvent(eventType string, payload any) {
 // memutar — sebelumnya user_id ditempel oleh handler WebSocket.
 func (h *Hub) BroadcastUserEvent(userID string, eventType string, payload any) {
 	h.Publish(Event{Type: eventType, UserID: userID, Payload: payload}, nil)
+}
+
+// PublishToUser mengirim event HANYA ke koneksi milik satu user. Dipakai
+// notifikasi in-app: mengirimnya lewat broadcast akan membocorkan isi
+// notifikasi ke semua orang yang sedang terhubung.
+func (h *Hub) PublishToUser(userID uuid.UUID, eventType string, payload any) {
+	event := Event{Type: eventType, Payload: payload, At: time.Now().UTC()}
+
+	data, err := json.Marshal(event)
+	if err != nil {
+		log.Printf("websocket: failed to encode event %s: %v", eventType, err)
+		return
+	}
+
+	select {
+	case h.broadcast <- broadcastRequest{data: data, to: &userID}:
+	case <-h.done:
+	}
 }
 
 func (h *Hub) Publish(event Event, exclude *Client) {
