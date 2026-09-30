@@ -194,3 +194,60 @@ func TestHubStopClosesAllClients(t *testing.T) {
 		t.Fatal("hub.Stop() tidak menutup channel client")
 	}
 }
+
+func TestHubPublishToUserReachesOnlyThatUser(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+	defer hub.Stop()
+
+	target := newTestClient()
+	other := newTestClient()
+	hub.register <- target
+	hub.register <- other
+
+	hub.PublishToUser(target.userID, "notification:new", map[string]any{"id": 7})
+
+	select {
+	case raw := <-target.send:
+		var event Event
+		if err := json.Unmarshal(raw, &event); err != nil {
+			t.Fatalf("payload bukan JSON valid: %v", err)
+		}
+		if event.Type != "notification:new" {
+			t.Fatalf("type = %q, ingin notification:new", event.Type)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("user tujuan tidak menerima notifikasi")
+	}
+
+	select {
+	case raw := <-other.send:
+		t.Fatalf("user lain ikut menerima notifikasi: %s", raw)
+	case <-time.After(200 * time.Millisecond):
+		// benar: hanya user tujuan yang menerima
+	}
+}
+
+func TestHubPublishToUserReachesEveryConnectionOfTarget(t *testing.T) {
+	hub := NewHub()
+	go hub.Run()
+	defer hub.Stop()
+
+	// Satu user bisa punya beberapa koneksi (mis. dua tab); semuanya harus
+	// menerima notifikasi yang sama.
+	userID := uuid.New()
+	first := &Client{userID: userID, send: make(chan []byte, sendBufferSize)}
+	second := &Client{userID: userID, send: make(chan []byte, sendBufferSize)}
+	hub.register <- first
+	hub.register <- second
+
+	hub.PublishToUser(userID, "notification:new", map[string]any{"id": 9})
+
+	for index, client := range []*Client{first, second} {
+		select {
+		case <-client.send:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("koneksi ke-%d milik user tujuan tidak menerima notifikasi", index+1)
+		}
+	}
+}
