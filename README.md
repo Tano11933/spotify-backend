@@ -510,6 +510,23 @@ user di path, jadi tidak ada permukaan untuk IDOR.
 - Profil memakai middleware **auth opsional**: tanpa token tetap `200` dengan
   `is_following: false`; token yang salah tetap ditolak `401`.
 
+### Feed & notifications
+
+| Method | Endpoint | Akses | Keterangan |
+|---|---|---|---|
+| GET | `/api/me/feed?limit=&offset=` | 🔒 | Aktivitas user yang diikuti: lagu diputar & playlist publik dibuat |
+| GET | `/api/me/notifications?limit=&offset=` | 🔒 | Daftar notifikasi; response menyertakan jumlah `unread` |
+| POST | `/api/me/notifications/read` | 🔒 | Tandai semua sudah dibaca (idempoten) |
+
+- Feed dibaca dengan **read-time join** ke `user_follows`, bukan fan-out saat
+  peristiwa terjadi: tidak ada salinan per pengikut yang bisa basi. Yang dicatat
+  hanya peristiwa publik; playlist pribadi tidak pernah masuk feed.
+- Notifikasi dikirim real-time lewat WebSocket **tertarget**: event
+  `notification:new` hanya sampai ke koneksi milik user penerima, bukan
+  broadcast ke semua orang.
+- Follow yang diulang tidak menambah notifikasi duplikat. Repository melaporkan
+  apakah baris follow-nya benar-benar baru, dan hanya itu yang memicu notifikasi.
+
 ### Player (perlu login)
 
 Playback state disimpan di server — resume lintas device, dan antrean tidak
@@ -602,6 +619,7 @@ Handshake tanpa token valid → `401`, tidak pernah naik ke `101`.
 | `pong` | Balasan `ping` | — |
 | `song:playing` | User lain memutar lagu | `{"song": {...}}` + `user_id` di level atas |
 | `song:created` | Lagu baru dibuat via REST | Objek song |
+| `notification:new` | Ada pengikut baru; dikirim **hanya** ke koneksi user penerima | `{"notification": {...}}` |
 | `error` | Pesan tidak valid | `{"message": "..."}` |
 
 `connection:ack` adalah sinyal yang harus ditunggu frontend sebelum mulai
