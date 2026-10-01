@@ -61,6 +61,7 @@ func main() {
 	// tanpa harus menjalankan API dulu.
 	if err := db.AutoMigrate(
 		&model.User{},
+		&model.Genre{},
 		&model.Artist{},
 		&model.Album{},
 		&model.Song{},
@@ -147,7 +148,7 @@ func ensureCatalogEmpty(db *gorm.DB) error {
 // (/albums/1). CASCADE diperlukan karena songs punya foreign key ke albums.
 func truncateCatalog(db *gorm.DB) error {
 	return db.Exec(
-		"TRUNCATE TABLE playlist_songs, playlists, songs, albums, artists RESTART IDENTITY CASCADE",
+		"TRUNCATE TABLE playlist_songs, playlists, songs, albums, artist_genres, artists, genres RESTART IDENTITY CASCADE",
 	).Error
 }
 
@@ -216,6 +217,7 @@ type seededCatalog struct {
 	artists []model.Artist
 	albums  []model.Album
 	songs   []model.Song
+	genres  []model.Genre
 }
 
 func seedCatalog(db *gorm.DB) (seededCatalog, error) {
@@ -228,6 +230,22 @@ func seedCatalog(db *gorm.DB) (seededCatalog, error) {
 	// direproduksi, dan kalau ada yang aneh, orang lain bisa mendapatkan
 	// database yang persis sama untuk diperiksa.
 	rng := rand.New(rand.NewPCG(20260805, 9000))
+
+	/* --- Genre ----------------------------------------------------------- */
+	genres := make([]model.Genre, 0, len(genreSeeds))
+	for _, name := range genreSeeds {
+		genres = append(genres, model.Genre{Name: name, Slug: slugify(name)})
+	}
+
+	if err := db.CreateInBatches(&genres, 50).Error; err != nil {
+		return result, fmt.Errorf("insert genres: %w", err)
+	}
+
+	genresByName := make(map[string]model.Genre, len(genres))
+	for _, genre := range genres {
+		genresByName[genre.Name] = genre
+	}
+	result.genres = genres
 
 	/* --- Artist ---------------------------------------------------------- */
 	artists := make([]model.Artist, len(artistSeeds))
@@ -244,6 +262,26 @@ func seedCatalog(db *gorm.DB) (seededCatalog, error) {
 	// Postgres dan segelintir saja. ID hasil generate ditulis balik ke slice.
 	if err := db.CreateInBatches(&artists, 50).Error; err != nil {
 		return result, fmt.Errorf("insert artists: %w", err)
+	}
+
+	/* --- Artist-Genre ---------------------------------------------------- */
+	// Baris relasi ditulis lewat INSERT langsung, bukan Association("Genres"):
+	// association GORM akan meng-upsert ulang baris genre yang sudah ada,
+	// padahal yang dibutuhkan hanya penautannya.
+	for i, seed := range artistSeeds {
+		for _, name := range seed.Genres {
+			genre, ok := genresByName[name]
+			if !ok {
+				return result, fmt.Errorf("artist %s menyebut genre %q yang tidak ada di genreSeeds", seed.Name, name)
+			}
+
+			if err := db.Exec(
+				"INSERT INTO artist_genres (artist_id, genre_id) VALUES (?, ?) ON CONFLICT DO NOTHING",
+				artists[i].ID, genre.ID,
+			).Error; err != nil {
+				return result, fmt.Errorf("tautkan artist %s ke genre %s: %w", seed.Name, name, err)
+			}
+		}
 	}
 
 	/* --- Album ----------------------------------------------------------- */
@@ -385,9 +423,9 @@ func seedPlaylists(db *gorm.DB, users []model.User, songs []model.Song) (int, er
 // urusan dengan keduanya.
 //
 // Pola key-nya diambil dari internal/service/cache.go: "artists:all",
-// "albums:all", "artist:<id>", "album:<id>".
+// "albums:all", "genres:all", "artist:<id>", "album:<id>", "genre:<id>".
 func flushCatalogCache(ctx context.Context, rdb *redis.Client) (int, error) {
-	patterns := []string{"artists:all", "albums:all", "artist:*", "album:*"}
+	patterns := []string{"artists:all", "albums:all", "genres:all", "artist:*", "album:*", "genre:*"}
 	deleted := 0
 
 	for _, pattern := range patterns {
@@ -484,6 +522,7 @@ func printSummary(users []model.User, catalog seededCatalog, playlists int, elap
 	log.Println("")
 	log.Println(" Seeding selesai dalam", elapsed.Round(time.Millisecond))
 	log.Printf("   %3d user", len(users))
+	log.Printf("   %3d genre", len(catalog.genres))
 	log.Printf("   %3d artist", len(catalog.artists))
 	log.Printf("   %3d album", len(catalog.albums))
 	log.Printf("   %3d lagu (%d di antaranya single tanpa album)", len(catalog.songs), singles)

@@ -26,6 +26,11 @@ type artistSeed struct {
 	Bio    string
 	Albums []albumSeed
 
+	// Genres adalah nama genre yang dipakai artist ini. Genrenya dibuat
+	// terpisah oleh seedGenres; di sini cukup namanya karena ID baru ada
+	// setelah INSERT.
+	Genres []string
+
 	// Singles adalah lagu tanpa album — mengisi kolom album_id dengan NULL.
 	//
 	// Ini bukan sekadar variasi data. Song.AlbumID di model bertipe *uint
@@ -35,10 +40,20 @@ type artistSeed struct {
 	Singles []string
 }
 
+// genreSeeds adalah daftar genre demo. Semuanya nama kategori umum yang
+// generik, bukan salinan daftar kategori milik layanan streaming mana pun.
+// Urutan di sini menentukan urutan INSERT.
+var genreSeeds = []string{
+	"Indie Folk", "Folk", "Elektronik", "Ambient", "Pop",
+	"Singer-Songwriter", "Rock", "World", "Dream Pop", "Indie",
+	"Post-Rock", "Synthpop", "Jazz",
+}
+
 var artistSeeds = []artistSeed{
 	{
-		Name: "Senja Kolektif",
-		Bio:  "Kolektif indie folk asal Yogyakarta yang menulis lagu tentang perjalanan pulang dan hal-hal kecil di antaranya.",
+		Name:   "Senja Kolektif",
+		Bio:    "Kolektif indie folk asal Yogyakarta yang menulis lagu tentang perjalanan pulang dan hal-hal kecil di antaranya.",
+		Genres: []string{"Indie Folk", "Folk"},
 		Albums: []albumSeed{
 			{
 				Title: "Ruang Tunggu", Year: 2021, Month: time.March,
@@ -56,8 +71,9 @@ var artistSeeds = []artistSeed{
 		Singles: []string{"Lampu Jalan"},
 	},
 	{
-		Name: "Rimba Elektrik",
-		Bio:  "Duo elektronik yang meramu rekaman suara hutan dengan synthesizer modular.",
+		Name:   "Rimba Elektrik",
+		Bio:    "Duo elektronik yang meramu rekaman suara hutan dengan synthesizer modular.",
+		Genres: []string{"Elektronik", "Ambient"},
 		Albums: []albumSeed{
 			{
 				Title: "Sinyal Hutan", Year: 2020, Month: time.June,
@@ -75,8 +91,9 @@ var artistSeeds = []artistSeed{
 		Singles: []string{"Rekursi"},
 	},
 	{
-		Name: "Nadia Ardhana",
-		Bio:  "Penyanyi pop dengan lirik percakapan sehari-hari yang jujur dan tidak berlebihan.",
+		Name:   "Nadia Ardhana",
+		Bio:    "Penyanyi pop dengan lirik percakapan sehari-hari yang jujur dan tidak berlebihan.",
+		Genres: []string{"Pop", "Singer-Songwriter"},
 		Albums: []albumSeed{
 			{
 				Title: "Katanya Begitu", Year: 2021, Month: time.August,
@@ -94,8 +111,9 @@ var artistSeeds = []artistSeed{
 		Singles: []string{"Nanti Kita Cerita"},
 	},
 	{
-		Name: "Bara Timur",
-		Bio:  "Band rock empat personel yang lagunya banyak bercerita tentang kerja, lelah, dan pulang.",
+		Name:   "Bara Timur",
+		Bio:    "Band rock empat personel yang lagunya banyak bercerita tentang kerja, lelah, dan pulang.",
+		Genres: []string{"Rock"},
 		Albums: []albumSeed{
 			{
 				Title: "Tanah Merah", Year: 2019, Month: time.October,
@@ -109,8 +127,9 @@ var artistSeeds = []artistSeed{
 		Singles: []string{"Bensin Habis"},
 	},
 	{
-		Name: "Laut Tenang",
-		Bio:  "Proyek ambient solo dengan komposisi panjang tanpa lirik, dirancang untuk didengarkan utuh.",
+		Name:   "Laut Tenang",
+		Bio:    "Proyek ambient solo dengan komposisi panjang tanpa lirik, dirancang untuk didengarkan utuh.",
+		Genres: []string{"Ambient"},
 		Albums: []albumSeed{
 			{
 				Title: "Kedalaman", Year: 2020, Month: time.December,
@@ -127,8 +146,9 @@ var artistSeeds = []artistSeed{
 		},
 	},
 	{
-		Name: "Gamelan Futura",
-		Bio:  "Eksperimen menabrakkan laras pelog dan slendro dengan produksi elektronik kontemporer.",
+		Name:   "Gamelan Futura",
+		Bio:    "Eksperimen menabrakkan laras pelog dan slendro dengan produksi elektronik kontemporer.",
+		Genres: []string{"World", "Elektronik"},
 		Albums: []albumSeed{
 			{
 				Title: "Pelog Sintetik", Year: 2021, Month: time.November,
@@ -142,8 +162,9 @@ var artistSeeds = []artistSeed{
 		Singles: []string{"Interval Ganjil"},
 	},
 	{
-		Name: "Reza Mahendra",
-		Bio:  "Penulis lagu yang membawakan sendiri karyanya dengan gitar akustik dan sedikit alat tiup.",
+		Name:   "Reza Mahendra",
+		Bio:    "Penulis lagu yang membawakan sendiri karyanya dengan gitar akustik dan sedikit alat tiup.",
+		Genres: []string{"Folk", "Singer-Songwriter"},
 		Albums: []albumSeed{
 			{
 				Title: "Catatan Kaki", Year: 2020, Month: time.February,
@@ -161,8 +182,9 @@ var artistSeeds = []artistSeed{
 		Singles: []string{"Salam dari Jauh"},
 	},
 	{
-		Name: "Velvet Harbour",
-		Bio:  "Dream pop quartet built on reverb-soaked guitars and vocals mixed just below the surface.",
+		Name:   "Velvet Harbour",
+		Bio:    "Dream pop quartet built on reverb-soaked guitars and vocals mixed just below the surface.",
+		Genres: []string{"Dream Pop", "Indie"},
 		Albums: []albumSeed{
 			{
 				Title: "Saltwater Rooms", Year: 2021, Month: time.April,
@@ -179,8 +201,9 @@ var artistSeeds = []artistSeed{
 		},
 	},
 	{
-		Name: "Northern Static",
-		Bio:  "Instrumental post-rock built around long crescendos and very few words.",
+		Name:   "Northern Static",
+		Bio:    "Instrumental post-rock built around long crescendos and very few words.",
+		Genres: []string{"Post-Rock", "Ambient"},
 		Albums: []albumSeed{
 			{
 				Title: "Glacier Mail", Year: 2019, Month: time.May,
@@ -194,8 +217,9 @@ var artistSeeds = []artistSeed{
 		Singles: []string{"Aurora Delay"},
 	},
 	{
-		Name: "Ash & Amber",
-		Bio:  "A folk duo trading verses about small towns, worn-out coats, and the long way home.",
+		Name:   "Ash & Amber",
+		Bio:    "A folk duo trading verses about small towns, worn-out coats, and the long way home.",
+		Genres: []string{"Folk"},
 		Albums: []albumSeed{
 			{
 				Title: "Two Chairs", Year: 2020, Month: time.September,
@@ -212,8 +236,9 @@ var artistSeeds = []artistSeed{
 		},
 	},
 	{
-		Name: "Kaleido Bloom",
-		Bio:  "Synthpop project obsessed with analog warmth and impossibly bright choruses.",
+		Name:   "Kaleido Bloom",
+		Bio:    "Synthpop project obsessed with analog warmth and impossibly bright choruses.",
+		Genres: []string{"Synthpop", "Pop"},
 		Albums: []albumSeed{
 			{
 				Title: "Neon Orchard", Year: 2021, Month: time.July,
@@ -227,8 +252,9 @@ var artistSeeds = []artistSeed{
 		Singles: []string{"Glitter Rust"},
 	},
 	{
-		Name: "Midnight Cartography",
-		Bio:  "A jazz quintet that maps cities after dark, one late set at a time.",
+		Name:   "Midnight Cartography",
+		Bio:    "A jazz quintet that maps cities after dark, one late set at a time.",
+		Genres: []string{"Jazz"},
 		Albums: []albumSeed{
 			{
 				Title: "Late Meridian", Year: 2020, Month: time.November,
@@ -245,8 +271,9 @@ var artistSeeds = []artistSeed{
 		},
 	},
 	{
-		Name: "Paper Lanterns",
-		Bio:  "Indie four-piece writing about the hours nobody else is awake for.",
+		Name:   "Paper Lanterns",
+		Bio:    "Indie four-piece writing about the hours nobody else is awake for.",
+		Genres: []string{"Indie", "Indie Folk"},
 		Albums: []albumSeed{
 			{
 				Title: "Small Hours", Year: 2021, Month: time.January,
@@ -260,8 +287,9 @@ var artistSeeds = []artistSeed{
 		Singles: []string{"Lantern Fuel"},
 	},
 	{
-		Name: "The Quiet Machines",
-		Bio:  "Alt rock trio naming every song after something that eventually breaks.",
+		Name:   "The Quiet Machines",
+		Bio:    "Alt rock trio naming every song after something that eventually breaks.",
+		Genres: []string{"Rock", "Post-Rock"},
 		Albums: []albumSeed{
 			{
 				Title: "Factory Settings", Year: 2019, Month: time.August,

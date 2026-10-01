@@ -28,7 +28,10 @@ func (r *ArtistRepository) FindAll(ctx context.Context) ([]model.Artist, error) 
 
 func (r *ArtistRepository) FindByID(ctx context.Context, id uint) (*model.Artist, error) {
 	var artist model.Artist
-	if err := r.db.WithContext(ctx).First(&artist, id).Error; err != nil {
+	// Detail artist menyertakan genre supaya halaman artist bisa menampilkan
+	// dan menautkannya. Daftar artist sengaja tidak ikut memuat genre: list
+	// tidak membutuhkannya dan Preload-nya menambah query per halaman.
+	if err := r.db.WithContext(ctx).Preload("Genres").First(&artist, id).Error; err != nil {
 		return nil, translateNotFound(err)
 	}
 	return &artist, nil
