@@ -138,6 +138,9 @@ func New(cfg Config) (*App, error) {
 	followRepo := repository.NewFollowRepository(cfg.DB)
 	activityRepo := repository.NewActivityRepository(cfg.DB)
 	notificationRepo := repository.NewNotificationRepository(cfg.DB)
+	genreRepo := repository.NewGenreRepository(cfg.DB)
+	recommendationRepo := repository.NewRecommendationRepository(cfg.DB)
+	chartRepo := repository.NewChartRepository(cfg.DB)
 
 	authService := service.NewAuthService(userRepo, tokenRepo, jwtManager, mailService, cfg.ResetTokenTTL)
 	artistService := service.NewArtistService(artistRepo, cacheStore, cfg.CacheTTL)
@@ -152,21 +155,29 @@ func New(cfg Config) (*App, error) {
 	playerService := service.NewPlayerService(playerRepo, songRepo, hub, feedService)
 	mediaService := service.NewMediaService(songRepo, fileStorage, cfg.MaxUploadBytes)
 	socialService := service.NewSocialService(followRepo, userRepo, playlistRepo, notificationService)
+	genreService := service.NewGenreService(genreRepo, artistRepo, cacheStore, cfg.CacheTTL)
+	recommendationService := service.NewRecommendationService(recommendationRepo, artistRepo)
+	// TTL penanda refresh chart memakai CacheTTL yang sama dengan cache katalog;
+	// di test integrasi nilainya 1 menit sehingga data test cepat terlihat.
+	chartService := service.NewChartService(chartRepo, songRepo, cfg.Redis, cfg.CacheTTL)
 
 	h := &router.Handlers{
-		Artist:       handler.NewArtistHandler(artistService),
-		Song:         handler.NewSongHandler(songService),
-		Album:        handler.NewAlbumHandler(albumService),
-		Auth:         handler.NewAuthHandler(authService),
-		Playlist:     handler.NewPlaylistHandler(playlistService),
-		Search:       handler.NewSearchHandler(searchService),
-		Library:      handler.NewLibraryHandler(libraryService),
-		Player:       handler.NewPlayerHandler(playerService),
-		Media:        handler.NewMediaHandler(mediaService),
-		Social:       handler.NewSocialHandler(socialService),
-		Feed:         handler.NewFeedHandler(feedService),
-		Notification: handler.NewNotificationHandler(notificationService),
-		WS:           handler.NewWSHandler(hub, songService),
+		Artist:         handler.NewArtistHandler(artistService),
+		Song:           handler.NewSongHandler(songService),
+		Album:          handler.NewAlbumHandler(albumService),
+		Auth:           handler.NewAuthHandler(authService),
+		Playlist:       handler.NewPlaylistHandler(playlistService),
+		Search:         handler.NewSearchHandler(searchService),
+		Library:        handler.NewLibraryHandler(libraryService),
+		Player:         handler.NewPlayerHandler(playerService),
+		Media:          handler.NewMediaHandler(mediaService),
+		Social:         handler.NewSocialHandler(socialService),
+		Feed:           handler.NewFeedHandler(feedService),
+		Notification:   handler.NewNotificationHandler(notificationService),
+		Genre:          handler.NewGenreHandler(genreService),
+		Recommendation: handler.NewRecommendationHandler(recommendationService),
+		Chart:          handler.NewChartHandler(chartService),
+		WS:             handler.NewWSHandler(hub, songService),
 	}
 
 	mw := &router.Middlewares{
@@ -203,6 +214,9 @@ func New(cfg Config) (*App, error) {
 func (a *App) Migrate() error {
 	if err := a.DB.AutoMigrate(
 		&model.User{},
+		// Genre didaftarkan sebelum Artist karena tabel artist_genres
+		// (many2many) membutuhkan tabel genres lebih dulu.
+		&model.Genre{},
 		&model.Artist{},
 		&model.Album{},
 		&model.Song{},

@@ -10,19 +10,22 @@ import (
 )
 
 type Handlers struct {
-	Artist       *handler.ArtistHandler
-	Song         *handler.SongHandler
-	Album        *handler.AlbumHandler
-	Auth         *handler.AuthHandler
-	Playlist     *handler.PlaylistHandler
-	Search       *handler.SearchHandler
-	Library      *handler.LibraryHandler
-	Player       *handler.PlayerHandler
-	Media        *handler.MediaHandler
-	Social       *handler.SocialHandler
-	Feed         *handler.FeedHandler
-	Notification *handler.NotificationHandler
-	WS           *handler.WSHandler
+	Artist         *handler.ArtistHandler
+	Song           *handler.SongHandler
+	Album          *handler.AlbumHandler
+	Auth           *handler.AuthHandler
+	Playlist       *handler.PlaylistHandler
+	Search         *handler.SearchHandler
+	Library        *handler.LibraryHandler
+	Player         *handler.PlayerHandler
+	Media          *handler.MediaHandler
+	Social         *handler.SocialHandler
+	Feed           *handler.FeedHandler
+	Notification   *handler.NotificationHandler
+	Genre          *handler.GenreHandler
+	Recommendation *handler.RecommendationHandler
+	Chart          *handler.ChartHandler
+	WS             *handler.WSHandler
 }
 
 type Middlewares struct {
@@ -39,12 +42,15 @@ func SetupRoutes(app *fiber.App, h *Handlers, mw *Middlewares) {
 
 	registerAuthRoutes(api, h, mw)
 	registerCatalogRoutes(api, h, mw)
+	registerGenreRoutes(api, h, mw)
 	registerPlaylistRoutes(api, h, mw)
 	registerLibraryRoutes(api, h, mw)
 	registerSocialRoutes(api, h, mw)
 	registerNotificationRoutes(api, h, mw)
+	registerRecommendationRoutes(api, h, mw)
 	registerPlayerRoutes(api, h, mw)
 	registerMediaRoutes(api, h, mw)
+	registerChartRoutes(api, h)
 	registerSearchRoutes(api, h)
 	registerWebSocketRoute(app, h, mw)
 }
@@ -129,11 +135,15 @@ func registerCatalogRoutes(api fiber.Router, h *Handlers, mw *Middlewares) {
 	artists.Get("/", h.Artist.GetAll)
 	artists.Get("/:id", h.Artist.GetByID)
 	artists.Get("/:artistId/songs", h.Song.GetByArtist)
+	// "Fans also like": dihitung dari irisan pengikut artist.
+	artists.Get("/:id/related", h.Recommendation.RelatedArtists)
 	// Tanda ... di akhir adalah "spread" — memecah slice menjadi argumen
 	// terpisah, karena Post() menerima handler secara variadic.
 	artists.Post("/", chain(adminOnly, h.Artist.Create)...)
 	artists.Put("/:id", chain(adminOnly, h.Artist.Update)...)
 	artists.Delete("/:id", chain(adminOnly, h.Artist.Delete)...)
+	// Penetapan genre adalah kurasi katalog, jadi admin-only.
+	artists.Put("/:id/genres", chain(adminOnly, h.Genre.SetArtistGenres)...)
 
 	albums := api.Group("/albums")
 	albums.Get("/", h.Album.GetAll)
@@ -168,6 +178,22 @@ func chain(middlewares []fiber.Handler, final fiber.Handler) []fiber.Handler {
 	result := make([]fiber.Handler, 0, len(middlewares)+1)
 	result = append(result, middlewares...)
 	return append(result, final)
+}
+
+// registerGenreRoutes mendaftarkan katalog genre. Membaca bersifat publik
+// (halaman Browse harus bisa dibuka tanpa login); mengubahnya admin-only
+// karena genre adalah kurasi katalog.
+func registerGenreRoutes(api fiber.Router, h *Handlers, mw *Middlewares) {
+	adminOnly := []fiber.Handler{mw.Auth.Protected(), mw.Auth.RequireAdmin()}
+
+	genres := api.Group("/genres")
+	genres.Get("/", h.Genre.GetAll)
+	genres.Get("/:id", h.Genre.GetByID)
+	genres.Get("/:id/artists", h.Genre.GetArtists)
+
+	genres.Post("/", chain(adminOnly, h.Genre.Create)...)
+	genres.Put("/:id", chain(adminOnly, h.Genre.Update)...)
+	genres.Delete("/:id", chain(adminOnly, h.Genre.Delete)...)
 }
 
 func registerPlaylistRoutes(api fiber.Router, h *Handlers, mw *Middlewares) {
@@ -249,6 +275,13 @@ func registerNotificationRoutes(api fiber.Router, h *Handlers, mw *Middlewares) 
 	me.Post("/notifications/read", h.Notification.MarkAllRead)
 }
 
+// registerRecommendationRoutes mendaftarkan rekomendasi personal. Butuh login
+// karena hasilnya bergantung pada riwayat putar user yang sedang login.
+func registerRecommendationRoutes(api fiber.Router, h *Handlers, mw *Middlewares) {
+	me := api.Group("/me", mw.Auth.Protected())
+	me.Get("/recommendations", h.Recommendation.MadeForYou)
+}
+
 // registerPlayerRoutes mendaftarkan playback: state, antrean, riwayat, dan
 // endpoint "play" yang mencatat semuanya sekaligus.
 func registerPlayerRoutes(api fiber.Router, h *Handlers, mw *Middlewares) {
@@ -277,6 +310,14 @@ func registerMediaRoutes(api fiber.Router, h *Handlers, mw *Middlewares) {
 		mw.Auth.RequireAdmin(),
 		h.Media.UploadAudio,
 	)
+}
+
+// registerChartRoutes mendaftarkan chart publik: lagu dan artist terpopuler
+// 7 hari terakhir. Datanya dari materialized view, di-refresh lazily.
+func registerChartRoutes(api fiber.Router, h *Handlers) {
+	charts := api.Group("/charts")
+	charts.Get("/tracks", h.Chart.TopTracks)
+	charts.Get("/artists", h.Chart.TopArtists)
 }
 
 // registerSearchRoutes mendaftarkan pencarian katalog.

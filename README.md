@@ -380,10 +380,12 @@ password tidak membuang token.
 | Method | Endpoint | Akses |
 |---|---|---|
 | GET | `/api/artists` | 🌐 *(cache 5 menit)* |
-| GET | `/api/artists/:id` | 🌐 *(cache 5 menit)* |
+| GET | `/api/artists/:id` | 🌐 *(cache 5 menit, menyertakan `genres`)* |
 | GET | `/api/artists/:artistId/songs` | 🌐 |
+| GET | `/api/artists/:id/related` | 🌐 (lihat Rekomendasi) |
 | POST | `/api/artists` | 👑 |
 | PUT | `/api/artists/:id` | 👑 |
+| PUT | `/api/artists/:id/genres` | 👑 ganti genre `{ "genre_ids": [1, 2] }` |
 | DELETE | `/api/artists/:id` | 👑 |
 
 ```json
@@ -407,6 +409,29 @@ password tidak membuang token.
   "release_date": "2019-04-05T00:00:00Z", "cover_url": "https://example.com/c.jpg" }
 ```
 `422` kalau `artist_id` menunjuk artist yang tidak ada.
+
+### Genre
+
+| Method | Endpoint | Akses |
+|---|---|---|
+| GET | `/api/genres` | 🌐 *(cache 5 menit)* |
+| GET | `/api/genres/:id` | 🌐 *(cache 5 menit)* |
+| GET | `/api/genres/:id/artists` | 🌐 |
+| POST | `/api/genres` | 👑 |
+| PUT | `/api/genres/:id` | 👑 |
+| DELETE | `/api/genres/:id` | 👑 |
+
+```json
+// POST/PUT body
+{ "name": "Indie Folk" }
+```
+
+- `slug` dihitung server dari `name`, jadi client tidak pernah mengirimnya.
+- Nama duplikat → `409`. Menghapus genre tidak menghapus artist: relasi
+  `artist_genres` yang ikut terhapus lewat FK `ON DELETE CASCADE`.
+- Genre ditempelkan ke artist lewat `PUT /api/artists/:id/genres`. Body
+  `{ "genre_ids": [1, 2] }` **menimpa** seluruh relasi lama, dan `[]` melepas
+  semuanya. Id yang tidak ada → `422`.
 
 ### Song
 
@@ -526,6 +551,27 @@ user di path, jadi tidak ada permukaan untuk IDOR.
   broadcast ke semua orang.
 - Follow yang diulang tidak menambah notifikasi duplikat. Repository melaporkan
   apakah baris follow-nya benar-benar baru, dan hanya itu yang memicu notifikasi.
+
+### Rekomendasi & charts
+
+| Method | Endpoint | Akses | Keterangan |
+|---|---|---|---|
+| GET | `/api/artists/:id/related` | 🌐 | "Fans also like": artist yang pengikutnya beririsan |
+| GET | `/api/me/recommendations` | 🔒 | "Made for you" dari genre favorit user |
+| GET | `/api/charts/tracks` | 🌐 | Lagu terpopuler 7 hari terakhir (+ field `plays`) |
+| GET | `/api/charts/artists` | 🌐 | Artist terpopuler 7 hari (+ total `plays`) |
+
+- Semua heuristiknya SQL agregat, tanpa model machine learning:
+  - "Fans also like" menghitung irisan `followed_artists`: user yang mengikuti
+    artist A juga mengikuti B. Kalau belum ada irisan sama sekali, hasilnya
+    jatuh ke artist lain yang berbagi genre supaya halaman tidak kosong.
+  - "Made for you" mengambil genre terbanyak dari riwayat putar user, lalu
+    lagu dari genre itu; lagu yang belum diputar 7 hari terakhir didahulukan.
+    User tanpa riwayat putar mendapat lagu terpopuler global.
+- Chart dibaca dari materialized view `chart_song_plays_7d` (migrasi 0008) dan
+  di-refresh **lazily**: penanda Redis (`SETNX`) membuat satu request melakukan
+  `REFRESH ... CONCURRENTLY`, request lain langsung membaca data yang ada.
+  Worker terjadwal yang me-refresh berkala menyusul di Phase E.
 
 ### Player (perlu login)
 
@@ -704,13 +750,16 @@ Menyalakan Postgres + Redis sementara lewat **testcontainers** (butuh Docker),
 menjalankan migrasi seperti aplikasi asli, lalu menguji alur end-to-end:
 auth + rotasi refresh token, invalidasi cache artist→album, guard delete 409,
 bentuk payload (artist/album/user ter-preload), proteksi mass assignment,
-envelope pagination, kode error, dan pencarian (termasuk typo).
+envelope pagination, kode error, pencarian (termasuk typo), library, playback
+dan media, sosial (follow, feed, notifikasi), genre, rekomendasi, dan chart.
 
 ## Belum Dikerjakan
 
 - Redis Pub/Sub sebagai broker WebSocket — hub in-memory tidak sinkron kalau
   backend di-scale ke beberapa instance
 - Handler layer belum punya unit test (dengan service tiruan)
+- Browse lanjutan: halaman New Releases & kategori kurasi manual (sekarang
+  browse memakai genre), plus chart yang di-refresh worker terjadwal
 - Docker full-stack demo (`Dockerfile` backend & frontend +
   `docker-compose.prod.yml`) — lihat `DOCKER.md`
 - Cursor pagination untuk feed/history (list katalog sudah offset-based)
