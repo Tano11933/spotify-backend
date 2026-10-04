@@ -696,6 +696,15 @@ berkomunikasi lewat channel, jadi tidak ada mutex sama sekali. Client yang
 terlalu lambat mengonsumsi pesan otomatis diputus supaya tidak membekukan
 broadcast untuk semua orang.
 
+**Multi-instance lewat Redis Pub/Sub.** Hub setiap proses hanya tahu koneksi
+yang terhubung ke proses itu. Karena itu setiap event yang dipublish lokal ikut
+dikirim ke channel `ws:events` di Redis, dan setiap instance berlangganan
+channel yang sama; pesan dari instance lain disuntikkan ke loop hub yang sama
+dengan dispatch lokal. Setiap pesan membawa `origin` (id instance pengirim),
+sehingga instance pengirim tidak memproses ulang pesannya sendiri dan client
+lokal tidak menerima event dua kali. Redis mati hanya mematikan fan-out lintas
+instance; real-time di instance sendiri tetap jalan.
+
 ---
 
 ## Catatan Desain
@@ -713,6 +722,14 @@ jadi `refresh_token:{user_id}:{jti}`.
 **Cache fail-open.** Redis mati membuat aplikasi **lambat**, bukan **rusak**:
 error cache di-log lalu diabaikan, request tetap dilayani dari Postgres. Rate
 limiter juga fail-open — Redis mati tidak boleh mematikan endpoint login total.
+
+**Cache v2: singleflight + stale-while-revalidate.** Katalog (artist, album,
+genre) memakai `GetOrLoadJSON`: saat cache kosong hanya **satu** request yang
+memuat dari database, sisanya menunggu hasil yang sama (anti thundering herd).
+Setelah TTL utama habis, nilai lama masih disajikan sampai `ttl + staleTTL`
+sementara satu goroutine me-refresh di belakang, jadi pembaca tidak pernah
+menunggu refresh. Nilai disimpan bersama `fetched_at` di satu key, dan invalidasi
+tetap memakai `DEL` seperti sebelumnya.
 
 **User ID pakai UUID, katalog pakai `uint`.** Campur tipe ini keputusan sadar:
 ID artist/album/song tidak sensitif kalau sekuensial, tapi ID user muncul di JWT
@@ -734,7 +751,7 @@ go test ./...
 | `pkg/jwt` | Round-trip token, tolak: secret salah, kedaluwarsa, payload diubah, `alg: none`, tipe token tertukar; keunikan `jti` |
 | `internal/service` (auth) | Register (hash bcrypt, normalisasi email, role dipaksa, duplikat, batas panjang password rune vs byte), login (error identik untuk password salah & email tak dikenal), refresh (rotasi + pencabutan), forgot/reset (sekali pakai, urutan validasi) |
 | `internal/service` (mail) | Pembentukan URL reset, escaping XSS di nama user, encoding token |
-| `internal/websocket` | Broadcast, exclude pengirim, buang client lambat, **akses konkuren (`-race`)**, shutdown |
+| `internal/websocket` | Broadcast, exclude pengirim, buang client lambat, fan-out broker antar instance (skip origin + tertarget), broker mati tetap melayani lokal, **akses konkuren (`-race`)**, shutdown |
 
 Test auth service dan mail service jalan **tanpa Postgres dan tanpa Redis** —
 dependency-nya interface (`UserStore`, `TokenStore`, `Mailer`) dengan implementasi
@@ -751,12 +768,11 @@ menjalankan migrasi seperti aplikasi asli, lalu menguji alur end-to-end:
 auth + rotasi refresh token, invalidasi cache artist→album, guard delete 409,
 bentuk payload (artist/album/user ter-preload), proteksi mass assignment,
 envelope pagination, kode error, pencarian (termasuk typo), library, playback
-dan media, sosial (follow, feed, notifikasi), genre, rekomendasi, dan chart.
+dan media, sosial (follow, feed, notifikasi), genre, rekomendasi, chart,
+singleflight + stale-while-revalidate cache, dan round-trip broker Redis.
 
 ## Belum Dikerjakan
 
-- Redis Pub/Sub sebagai broker WebSocket — hub in-memory tidak sinkron kalau
-  backend di-scale ke beberapa instance
 - Handler layer belum punya unit test (dengan service tiruan)
 - Browse lanjutan: halaman New Releases & kategori kurasi manual (sekarang
   browse memakai genre), plus chart yang di-refresh worker terjadwal
