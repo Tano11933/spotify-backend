@@ -1,6 +1,7 @@
 package websocket
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"time"
@@ -15,6 +16,11 @@ const (
 	pingInterval   = (pongWait * 9) / 10
 	maxMessageSize = 4096
 	sendBufferSize = 16
+
+	// brokerPublishTimeout membatasi berapa lama request menunggu Redis saat
+	// meneruskan event ke instance lain. Redis lokal normalnya di bawah 1ms;
+	// timeout ini hanya jaring pengaman kalau Redis sedang bermasalah.
+	brokerPublishTimeout = 2 * time.Second
 )
 
 const EventConnectionAck = "connection:ack"
@@ -66,6 +72,10 @@ type Hub struct {
 	unregister chan *Client
 	broadcast  chan broadcastRequest
 	done       chan struct{}
+
+	// broker + instanceID diisi lewat SetBroker SEBELUM Run dipanggil.
+	broker     Broker
+	instanceID string
 }
 
 func NewHub() *Hub {
@@ -80,7 +90,21 @@ func NewHub() *Hub {
 	}
 }
 
+// SetBroker memasang jembatan antar instance. instanceID dipakai menandai
+// asal pesan supaya instance pengirim tidak memproses ulang pesannya sendiri.
+//
+// WAJIB dipanggil sebelum Run: field-nya dibaca goroutine konsumen broker
+// tanpa lock, dan mengubahnya saat hub berjalan adalah data race.
+func (h *Hub) SetBroker(broker Broker, instanceID string) {
+	h.broker = broker
+	h.instanceID = instanceID
+}
+
 func (h *Hub) Run() {
+	if h.broker != nil {
+		go h.consumeBroker()
+	}
+
 	for {
 
 		select {
@@ -108,6 +132,52 @@ func (h *Hub) Run() {
 			h.clients = make(map[*Client]struct{})
 			h.byUser = make(map[uuid.UUID]map[*Client]struct{})
 			log.Println("websocket: hub stopped")
+			return
+		}
+	}
+}
+
+// consumeBroker membaca pesan dari instance lain dan menyuntikkannya ke loop
+// hub yang sama dengan dispatch lokal, jadi tidak ada jalur pengiriman kedua
+// yang perlu dijaga terpisah.
+func (h *Hub) consumeBroker() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Stop() harus ikut menghentikan langganan; tanpa ini goroutine konsumen
+	// hidup lebih lama dari hub-nya.
+	go func() {
+		select {
+		case <-h.done:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
+	messages, err := h.broker.Subscribe(ctx)
+	if err != nil {
+		log.Printf("websocket: broker subscribe gagal, fan-out lintas instance nonaktif: %v", err)
+		return
+	}
+
+	for message := range messages {
+		if message.Origin == h.instanceID {
+			continue
+		}
+
+		req := broadcastRequest{data: message.Data}
+		if message.UserID != "" {
+			userID, err := uuid.Parse(message.UserID)
+			if err != nil {
+				log.Printf("websocket: broker message user_id tidak valid: %v", err)
+				continue
+			}
+			req.to = &userID
+		}
+
+		select {
+		case h.broadcast <- req:
+		case <-h.done:
 			return
 		}
 	}
@@ -190,6 +260,8 @@ func (h *Hub) PublishToUser(userID uuid.UUID, eventType string, payload any) {
 	case h.broadcast <- broadcastRequest{data: data, to: &userID}:
 	case <-h.done:
 	}
+
+	h.publishToBroker(data, userID.String())
 }
 
 func (h *Hub) Publish(event Event, exclude *Client) {
@@ -206,6 +278,27 @@ func (h *Hub) Publish(event Event, exclude *Client) {
 	select {
 	case h.broadcast <- broadcastRequest{data: data, exclude: exclude}:
 	case <-h.done:
+	}
+
+	h.publishToBroker(data, "")
+}
+
+// publishToBroker meneruskan event yang sudah di-encode ke instance lain.
+//
+// Kegagalan tidak fatal dan sengaja tidak dikembalikan: client di instance ini
+// sudah menerima event-nya, dan Redis yang mati hanya mematikan fan-out lintas
+// instance, bukan real-time secara keseluruhan.
+func (h *Hub) publishToBroker(data []byte, userID string) {
+	if h.broker == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), brokerPublishTimeout)
+	defer cancel()
+
+	message := BrokerMessage{Origin: h.instanceID, UserID: userID, Data: data}
+	if err := h.broker.Publish(ctx, message); err != nil {
+		log.Printf("websocket: broker publish gagal: %v", err)
 	}
 }
 

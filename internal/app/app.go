@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 
@@ -106,7 +107,12 @@ func New(cfg Config) (*App, error) {
 
 	// Hub harus jalan sebagai goroutine terpisah dan dibuat SEBELUM service,
 	// karena SongService menerimanya sebagai dependency untuk broadcast.
+	//
+	// Broker Redis membuat event hub sampai ke client yang terhubung ke
+	// instance lain; instanceID menandai asal pesan supaya instance pengirim
+	// tidak memproses ulang event-nya sendiri.
 	hub := ws.NewHub()
+	hub.SetBroker(ws.NewRedisBroker(cfg.Redis, ws.DefaultBrokerChannel), uuid.NewString())
 	go hub.Run()
 
 	// Storage menulis ke disk lokal. Ganti implementasinya (mis. S3/MinIO)
