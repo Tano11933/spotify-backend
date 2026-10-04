@@ -46,19 +46,18 @@ func (s *ArtistService) CreateArtist(ctx context.Context, artist *model.Artist) 
 // dilakukan di sini. Dengan begitu format cache tidak berubah dan tidak perlu
 // key per halaman; konsekuensinya seluruh list harus muat di memori — aman
 // untuk skala katalog sekarang, dan bisa digeser ke DB kalau nanti membesar.
+//
+// staleTTL diisi sama dengan cacheTTL: nilai boleh disajikan sampai 2x TTL,
+// dan begitu masuk jendela stale satu goroutine me-refresh di belakang
+// (lihat GetOrLoadJSON).
 func (s *ArtistService) GetAllArtists(ctx context.Context, params pagination.Params) (pagination.Page[model.Artist], error) {
 	var artists []model.Artist
 
-	hit, err := s.cache.GetJSON(ctx, cacheKeyArtistList, &artists)
-	warnCache("get "+cacheKeyArtistList, err)
-
-	if !hit {
-		artists, err = s.repo.FindAll(ctx)
-		if err != nil {
-			return pagination.Page[model.Artist]{}, err
-		}
-
-		warnCache("set "+cacheKeyArtistList, s.cache.SetJSON(ctx, cacheKeyArtistList, artists, s.cacheTTL))
+	err := s.cache.GetOrLoadJSON(ctx, cacheKeyArtistList, s.cacheTTL, s.cacheTTL, func(ctx context.Context) (any, error) {
+		return s.repo.FindAll(ctx)
+	}, &artists)
+	if err != nil {
+		return pagination.Page[model.Artist]{}, err
 	}
 
 	return pagination.NewPage(pagination.Slice(artists, params), int64(len(artists)), params), nil
@@ -68,20 +67,14 @@ func (s *ArtistService) GetArtistByID(ctx context.Context, id uint) (*model.Arti
 	key := cacheKeyArtist(id)
 
 	var artist model.Artist
-	hit, err := s.cache.GetJSON(ctx, key, &artist)
-	warnCache("get "+key, err)
-	if hit {
-		return &artist, nil
-	}
-
-	found, err := s.repo.FindByID(ctx, id)
+	err := s.cache.GetOrLoadJSON(ctx, key, s.cacheTTL, s.cacheTTL, func(ctx context.Context) (any, error) {
+		return s.repo.FindByID(ctx, id)
+	}, &artist)
 	if err != nil {
-
 		return nil, err
 	}
 
-	warnCache("set "+key, s.cache.SetJSON(ctx, key, found, s.cacheTTL))
-	return found, nil
+	return &artist, nil
 }
 
 func (s *ArtistService) UpdateArtist(ctx context.Context, artist *model.Artist) error {

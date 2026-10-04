@@ -57,20 +57,16 @@ func (s *GenreService) CreateGenre(ctx context.Context, genre *model.Genre) erro
 }
 
 // GetAllGenres memakai pola cache yang sama dengan artist/album: list utuh
-// disimpan di Redis dan pemotongan halaman dilakukan di sini.
+// disimpan di Redis dan pemotongan halaman dilakukan di sini, dengan
+// singleflight + stale-while-revalidate dari GetOrLoadJSON.
 func (s *GenreService) GetAllGenres(ctx context.Context, params pagination.Params) (pagination.Page[model.Genre], error) {
 	var genres []model.Genre
 
-	hit, err := s.cache.GetJSON(ctx, cacheKeyGenreList, &genres)
-	warnCache("get "+cacheKeyGenreList, err)
-
-	if !hit {
-		genres, err = s.repo.FindAll(ctx)
-		if err != nil {
-			return pagination.Page[model.Genre]{}, err
-		}
-
-		warnCache("set "+cacheKeyGenreList, s.cache.SetJSON(ctx, cacheKeyGenreList, genres, s.cacheTTL))
+	err := s.cache.GetOrLoadJSON(ctx, cacheKeyGenreList, s.cacheTTL, s.cacheTTL, func(ctx context.Context) (any, error) {
+		return s.repo.FindAll(ctx)
+	}, &genres)
+	if err != nil {
+		return pagination.Page[model.Genre]{}, err
 	}
 
 	return pagination.NewPage(pagination.Slice(genres, params), int64(len(genres)), params), nil
@@ -80,13 +76,9 @@ func (s *GenreService) GetGenreByID(ctx context.Context, id uint) (*model.Genre,
 	key := cacheKeyGenre(id)
 
 	var genre model.Genre
-	hit, err := s.cache.GetJSON(ctx, key, &genre)
-	warnCache("get "+key, err)
-	if hit {
-		return &genre, nil
-	}
-
-	found, err := s.repo.FindByID(ctx, id)
+	err := s.cache.GetOrLoadJSON(ctx, key, s.cacheTTL, s.cacheTTL, func(ctx context.Context) (any, error) {
+		return s.repo.FindByID(ctx, id)
+	}, &genre)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return nil, ErrGenreNotFound
@@ -94,8 +86,7 @@ func (s *GenreService) GetGenreByID(ctx context.Context, id uint) (*model.Genre,
 		return nil, err
 	}
 
-	warnCache("set "+key, s.cache.SetJSON(ctx, key, found, s.cacheTTL))
-	return found, nil
+	return &genre, nil
 }
 
 // UpdateGenre selalu menghitung ulang slug dari nama, supaya rename tidak

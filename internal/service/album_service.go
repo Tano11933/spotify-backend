@@ -53,20 +53,16 @@ func (s *AlbumService) CreateAlbum(ctx context.Context, album *model.Album) erro
 }
 
 // GetAllAlbums mengembalikan halaman album — strategi cache-nya sama dengan
-// GetAllArtists: simpan list utuh, potong di service.
+// GetAllArtists: simpan list utuh, potong di service, dan pakai
+// singleflight + stale-while-revalidate dari GetOrLoadJSON.
 func (s *AlbumService) GetAllAlbums(ctx context.Context, params pagination.Params) (pagination.Page[model.Album], error) {
 	var albums []model.Album
 
-	hit, err := s.cache.GetJSON(ctx, cacheKeyAlbumList, &albums)
-	warnCache("get "+cacheKeyAlbumList, err)
-
-	if !hit {
-		albums, err = s.repo.FindAll(ctx)
-		if err != nil {
-			return pagination.Page[model.Album]{}, err
-		}
-
-		warnCache("set "+cacheKeyAlbumList, s.cache.SetJSON(ctx, cacheKeyAlbumList, albums, s.cacheTTL))
+	err := s.cache.GetOrLoadJSON(ctx, cacheKeyAlbumList, s.cacheTTL, s.cacheTTL, func(ctx context.Context) (any, error) {
+		return s.repo.FindAll(ctx)
+	}, &albums)
+	if err != nil {
+		return pagination.Page[model.Album]{}, err
 	}
 
 	return pagination.NewPage(pagination.Slice(albums, params), int64(len(albums)), params), nil
@@ -76,19 +72,14 @@ func (s *AlbumService) GetAlbumByID(ctx context.Context, id uint) (*model.Album,
 	key := cacheKeyAlbum(id)
 
 	var album model.Album
-	hit, err := s.cache.GetJSON(ctx, key, &album)
-	warnCache("get "+key, err)
-	if hit {
-		return &album, nil
-	}
-
-	found, err := s.repo.FindByID(ctx, id)
+	err := s.cache.GetOrLoadJSON(ctx, key, s.cacheTTL, s.cacheTTL, func(ctx context.Context) (any, error) {
+		return s.repo.FindByID(ctx, id)
+	}, &album)
 	if err != nil {
 		return nil, err
 	}
 
-	warnCache("set "+key, s.cache.SetJSON(ctx, key, found, s.cacheTTL))
-	return found, nil
+	return &album, nil
 }
 
 func (s *AlbumService) UpdateAlbum(ctx context.Context, album *model.Album) error {
