@@ -19,6 +19,7 @@ import (
 	"spotify-backend/internal/middleware"
 	"spotify-backend/internal/migrations"
 	"spotify-backend/internal/model"
+	"spotify-backend/internal/queue"
 	"spotify-backend/internal/repository"
 	"spotify-backend/internal/router"
 	"spotify-backend/internal/service"
@@ -53,6 +54,9 @@ type Config struct {
 
 	CacheTTL      time.Duration
 	ResetTokenTTL time.Duration
+
+	// QueueName adalah nama antrean job Redis. Kosong berarti "jobs".
+	QueueName string
 
 	FrontendURL string
 	CORSOrigins string
@@ -130,7 +134,15 @@ func New(cfg Config) (*App, error) {
 	)
 
 	cacheStore := cache.NewStore(cfg.Redis)
-	mailService := service.NewMailService(cfg.Mailer, cfg.FrontendURL, cfg.ResetTokenTTL)
+
+	// Mailer dibungkus: kegagalan kirim pertama diantrekan untuk dicoba ulang
+	// worker, sementara SMTP yang sehat tidak berubah perilakunya.
+	jobQueue := queue.New(cfg.Redis, cfg.QueueName)
+	mailService := service.NewMailService(
+		newRetryingMailer(cfg.Mailer, jobQueue),
+		cfg.FrontendURL,
+		cfg.ResetTokenTTL,
+	)
 
 	userRepo := repository.NewUserRepository(cfg.DB)
 	tokenRepo := repository.NewTokenRepository(cfg.Redis)
