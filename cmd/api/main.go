@@ -4,7 +4,6 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 
@@ -12,10 +11,8 @@ import (
 
 	"spotify-backend/internal/app"
 	"spotify-backend/internal/middleware"
-	"spotify-backend/internal/service"
 	"spotify-backend/pkg/cache"
 	"spotify-backend/pkg/database"
-	"spotify-backend/pkg/mailer"
 )
 
 func main() {
@@ -32,6 +29,11 @@ func main() {
 		log.Fatal(err)
 	}
 
+	mail, err := app.MailerFromEnv()
+	if err != nil {
+		log.Fatal("Failed to configure mailer: ", err)
+	}
+
 	// --- Rakit aplikasi ---------------------------------------------------
 	//
 	// Semua dependency dirangkai di internal/app — main hanya membaca
@@ -43,15 +45,15 @@ func main() {
 
 		JWTSecret:        mustEnv("JWT_SECRET"),
 		JWTRefreshSecret: mustEnv("JWT_REFRESH_SECRET"),
-		AccessTTL:        envDuration("JWT_ACCESS_TTL", 15*time.Minute),
-		RefreshTTL:       envDuration("JWT_REFRESH_TTL", 7*24*time.Hour),
+		AccessTTL:        app.EnvDuration("JWT_ACCESS_TTL", 15*time.Minute),
+		RefreshTTL:       app.EnvDuration("JWT_REFRESH_TTL", 7*24*time.Hour),
 
-		CacheTTL:      envDuration("CACHE_TTL", 5*time.Minute),
-		ResetTokenTTL: envDuration("RESET_TOKEN_TTL", 15*time.Minute),
+		CacheTTL:      app.EnvDuration("CACHE_TTL", 5*time.Minute),
+		ResetTokenTTL: app.EnvDuration("RESET_TOKEN_TTL", 15*time.Minute),
 
 		FrontendURL: os.Getenv("FRONTEND_URL"),
 		CORSOrigins: origins,
-		Mailer:      buildMailer(),
+		Mailer:      mail,
 		StorageDir:  os.Getenv("UPLOAD_DIR"),
 	})
 	if err != nil {
@@ -114,40 +116,6 @@ func startWithGracefulShutdown(application *app.App) {
 	}
 }
 
-// buildMailer memilih implementasi mailer berdasarkan konfigurasi.
-//
-// Kalau SMTP_HOST kosong, aplikasi TIDAK gagal start — ia memakai LogMailer yang
-// menulis email ke terminal. Ini disengaja: kamu bisa menguji seluruh alur reset
-// password tanpa kredensial Mailtrap, tinggal copy link dari log.
-func buildMailer() service.Mailer {
-	host := os.Getenv("SMTP_HOST")
-	if host == "" {
-		log.Println("⚠️  SMTP_HOST is empty — using LogMailer (emails will be printed to this terminal)")
-		return mailer.NewLogMailer()
-	}
-
-	port, err := strconv.Atoi(os.Getenv("SMTP_PORT"))
-	if err != nil {
-		log.Fatalf("Invalid SMTP_PORT %q: %v", os.Getenv("SMTP_PORT"), err)
-	}
-
-	smtpMailer, err := mailer.NewSMTPMailer(mailer.Config{
-		Host:       host,
-		Port:       port,
-		Username:   os.Getenv("SMTP_USERNAME"),
-		Password:   os.Getenv("SMTP_PASSWORD"),
-		FromEmail:  os.Getenv("SMTP_FROM_EMAIL"),
-		FromName:   os.Getenv("SMTP_FROM_NAME"),
-		Encryption: mailer.Encryption(os.Getenv("SMTP_ENCRYPTION")),
-	})
-	if err != nil {
-		log.Fatal("Failed to configure SMTP mailer: ", err)
-	}
-
-	log.Printf("✅ SMTP mailer configured (%s:%d)", host, port)
-	return smtpMailer
-}
-
 // mustEnv membaca env yang WAJIB ada, dan mematikan aplikasi kalau tidak.
 //
 // Ini penting khusus untuk JWT secret. Kalau nilai kosong dibiarkan lolos,
@@ -160,20 +128,4 @@ func mustEnv(key string) string {
 		log.Fatalf("Required environment variable %s is not set", key)
 	}
 	return value
-}
-
-// envDuration membaca durasi bergaya Go ("15m", "168h", "5m30s") dengan
-// nilai default kalau kosong atau tidak valid.
-func envDuration(key string, fallback time.Duration) time.Duration {
-	raw := os.Getenv(key)
-	if raw == "" {
-		return fallback
-	}
-
-	d, err := time.ParseDuration(raw)
-	if err != nil {
-		log.Printf("Invalid duration %s=%q, using default %s", key, raw, fallback)
-		return fallback
-	}
-	return d
 }
