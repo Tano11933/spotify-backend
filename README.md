@@ -112,6 +112,9 @@ isi dengan kredensial [Mailtrap](https://mailtrap.io) (gratis untuk dev).
 ```bash
 go mod download
 go run ./cmd/api
+
+# opsional, di terminal lain: proses latar (retry email + refresh chart)
+go run ./cmd/worker
 ```
 
 Migrasi tabel berjalan otomatis via GORM AutoMigrate saat startup. Tidak ada
@@ -168,6 +171,8 @@ docker run --rm -v "${PWD}:/app" -w /app golang:1.26 go test -race ./...
 | `SMTP_ENCRYPTION` | — | `starttls` | `starttls` \| `ssltls` \| `none` |
 | `SMTP_FROM_EMAIL` `SMTP_FROM_NAME` | — | — | Pengirim email |
 | `FRONTEND_URL` | — | — | Basis link reset password di email |
+| `WORKER_QUEUE` | — | `jobs` | Nama antrean Redis untuk job latar |
+| `CHART_REFRESH_INTERVAL` | — | `5m` | Interval refresh chart terjadwal oleh worker |
 | `CORS_ALLOWED_ORIGINS` | — | `http://localhost:5173,http://localhost:3000` | Origin yang boleh memanggil API dari browser, dipisah koma. **Tidak boleh `*`** — app menolak start |
 | `UPLOAD_DIR` | — | `./uploads` | Direktori penyimpanan berkas audio hasil unggahan |
 
@@ -705,6 +710,30 @@ sehingga instance pengirim tidak memproses ulang pesannya sendiri dan client
 lokal tidak menerima event dua kali. Redis mati hanya mematikan fan-out lintas
 instance; real-time di instance sendiri tetap jalan.
 
+### Background worker (opsional)
+
+Proses terpisah dari API:
+
+```bash
+go run ./cmd/worker
+```
+
+| Job | Isi |
+|---|---|
+| `email:send` | Kirim ulang email yang gagal (mis. SMTP sempat down). Isi email dirender API dan ikut di payload, jadi worker tidak menyusun ulang templat. |
+| `chart:refresh` | Hitung ulang materialized view chart, dijadwalkan setiap `CHART_REFRESH_INTERVAL` (default 5 menit). |
+
+- Antreannya Redis: list untuk job siap, sorted set untuk backoff
+  (2s, 4s, 8s, 16s), dan list `:dead` untuk job yang menyerah setelah 5
+  percobaan.
+- Percobaan pertama email tetap **sinkron**; antrean hanya jalur retry, jadi
+  SMTP yang sehat tidak berubah perilakunya.
+- Worker tidak wajib jalan: tanpa worker, API tetap melayani request dan chart
+  kembali memakai refresh lazy saat endpoint-nya dibaca.
+- Semantiknya **at-most-once**: job yang sedang diproses saat worker mati tidak
+  dikembalikan otomatis. Untuk kebutuhan sekarang retry difokuskan pada
+  kegagalan handler, bukan crash recovery.
+
 ---
 
 ## Catatan Desain
@@ -752,6 +781,7 @@ go test ./...
 | `internal/service` (auth) | Register (hash bcrypt, normalisasi email, role dipaksa, duplikat, batas panjang password rune vs byte), login (error identik untuk password salah & email tak dikenal), refresh (rotasi + pencabutan), forgot/reset (sekali pakai, urutan validasi) |
 | `internal/service` (mail) | Pembentukan URL reset, escaping XSS di nama user, encoding token |
 | `internal/websocket` | Broadcast, exclude pengirim, buang client lambat, fan-out broker antar instance (skip origin + tertarget), broker mati tetap melayani lokal, **akses konkuren (`-race`)**, shutdown |
+| `internal/worker` | Handler terdaftar dipanggil, handler gagal → retry, job tanpa handler → dead-letter, antrean kosong tidak error |
 
 Test auth service dan mail service jalan **tanpa Postgres dan tanpa Redis** —
 dependency-nya interface (`UserStore`, `TokenStore`, `Mailer`) dengan implementasi
@@ -769,10 +799,14 @@ auth + rotasi refresh token, invalidasi cache artist→album, guard delete 409,
 bentuk payload (artist/album/user ter-preload), proteksi mass assignment,
 envelope pagination, kode error, pencarian (termasuk typo), library, playback
 dan media, sosial (follow, feed, notifikasi), genre, rekomendasi, chart,
-singleflight + stale-while-revalidate cache, dan round-trip broker Redis.
+singleflight + stale-while-revalidate cache, round-trip broker Redis, dan
+antrean job (backoff + dead-letter).
 
 ## Belum Dikerjakan
 
+- Flush play count & resize gambar dari rencana worker: play count sengaja
+  tetap dicatat sinkron supaya feed dan chart deterministik di test; resize
+  gambar menunggu endpoint unggah gambar (cover/avatar) yang belum ada
 - Handler layer belum punya unit test (dengan service tiruan)
 - Browse lanjutan: halaman New Releases & kategori kurasi manual (sekarang
   browse memakai genre), plus chart yang di-refresh worker terjadwal
