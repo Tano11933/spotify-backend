@@ -56,6 +56,33 @@ func (b *memoryBroker) Subscribe(ctx context.Context) (<-chan BrokerMessage, err
 	return channel, nil
 }
 
+// waitForSubscribers menunggu sampai sejumlah langganan aktif.
+//
+// Tanpa ini test balapan dengan startup hub: Publish bisa terjadi sebelum
+// consumeBroker selesai Subscribe, dan pesannya hilang — persis seperti Redis
+// Pub/Sub yang fire-and-forget. Di produksi itu perilaku yang diterima; di
+// test, ketidakpastian itu membuat hasilnya flaky.
+func (b *memoryBroker) waitForSubscribers(t *testing.T, want int) {
+	t.Helper()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		b.mu.Lock()
+		count := len(b.subscribers)
+		b.mu.Unlock()
+
+		if count >= want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	b.mu.Lock()
+	count := len(b.subscribers)
+	b.mu.Unlock()
+	t.Fatalf("broker hanya punya %d subscriber, mau %d", count, want)
+}
+
 // failingBroker meniru Redis yang sedang mati.
 type failingBroker struct{}
 
@@ -101,6 +128,7 @@ func TestBrokerFanoutReachesOtherHubOnce(t *testing.T) {
 	broker := newMemoryBroker()
 	hubA := startBrokerHub(t, broker, "instance-a")
 	hubB := startBrokerHub(t, broker, "instance-b")
+	broker.waitForSubscribers(t, 2)
 
 	local := newTestClient()
 	remote := newTestClient()
@@ -129,6 +157,7 @@ func TestBrokerTargetedEventReachesOnlyTargetAcrossHubs(t *testing.T) {
 	broker := newMemoryBroker()
 	hubA := startBrokerHub(t, broker, "instance-a")
 	hubB := startBrokerHub(t, broker, "instance-b")
+	broker.waitForSubscribers(t, 2)
 
 	target := newTestClient()
 	otherOnB := newTestClient()
