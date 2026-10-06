@@ -35,6 +35,7 @@ import (
 
 	"spotify-backend/internal/app"
 	"spotify-backend/internal/model"
+	"spotify-backend/pkg/logging"
 )
 
 var (
@@ -62,6 +63,10 @@ type silentMailer struct{}
 func (silentMailer) Send(context.Context, string, string, string, string) error { return nil }
 
 func TestMain(m *testing.M) {
+	// Log request middleware tidak perlu memenuhi output test; strukturnya
+	// sendiri sudah diuji di pkg/logging.
+	logging.SetupTo(io.Discard, "text")
+
 	ctx := context.Background()
 
 	pgContainer, err := tcpostgres.Run(ctx, "postgres:16",
