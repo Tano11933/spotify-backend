@@ -30,6 +30,7 @@ import (
 	"spotify-backend/internal/worker"
 	"spotify-backend/pkg/cache"
 	"spotify-backend/pkg/database"
+	"spotify-backend/pkg/logging"
 )
 
 const defaultChartRefreshInterval = 5 * time.Minute
@@ -38,6 +39,10 @@ func main() {
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found, using system env")
 	}
+
+	// Logger disiapkan paling awal supaya log startup ikut terstruktur,
+	// seragam dengan proses API.
+	logging.Setup(os.Getenv("LOG_FORMAT"))
 
 	db := database.ConnectPostgres()
 	rdb := cache.ConnectRedis()

@@ -13,12 +13,17 @@ import (
 	"spotify-backend/internal/middleware"
 	"spotify-backend/pkg/cache"
 	"spotify-backend/pkg/database"
+	"spotify-backend/pkg/logging"
 )
 
 func main() {
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found, using system env")
 	}
+
+	// Logger disiapkan paling awal supaya log startup (koneksi DB/Redis, dsb)
+	// ikut terstruktur. LOG_FORMAT=json untuk produksi; default text.
+	logging.Setup(os.Getenv("LOG_FORMAT"))
 
 	// --- Infrastruktur ----------------------------------------------------
 	db := database.ConnectPostgres()
