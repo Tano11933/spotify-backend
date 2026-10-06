@@ -161,6 +161,7 @@ docker run --rm -v "${PWD}:/app" -w /app golang:1.26 go test -race ./...
 | `REDIS_HOST` `REDIS_PORT` | ✅ | — | Koneksi Redis |
 | `APP_PORT` | — | `9000` | Port HTTP server |
 | `CACHE_TTL` | — | `5m` | TTL cache artist & album |
+| `LOG_FORMAT` | — | `text` | Format log: `text` (terminal) \| `json` (produksi) |
 | `JWT_SECRET` | ✅ | — | Secret access token — **app tidak start kalau kosong** |
 | `JWT_REFRESH_SECRET` | ✅ | — | Secret refresh token, harus **berbeda** dari di atas |
 | `JWT_ACCESS_TTL` | — | `15m` | Masa berlaku access token |
@@ -734,6 +735,26 @@ go run ./cmd/worker
   dikembalikan otomatis. Untuk kebutuhan sekarang retry difokuskan pada
   kegagalan handler, bukan crash recovery.
 
+### Observability
+
+| Endpoint | Isi |
+|---|---|
+| `GET /health` | Liveness: proses hidup. Tidak menyentuh dependency. |
+| `GET /ready` | Readiness: ping Postgres + Redis (timeout 2 detik). Gagal → `503` dengan detail per dependency. |
+| `GET /metrics` | Format eksposisi Prometheus: `melodia_http_requests_total`, `melodia_http_request_duration_seconds`, plus metrik runtime Go (`go_goroutines`, memori, GC). |
+
+- **Request ID**: setiap request mendapat `X-Request-ID`. Id dari client dipakai
+  ulang kalau masuk akal (maks 64 karakter), dan selalu dikembalikan di response
+  header supaya bisa disebut saat melaporkan masalah.
+- **Log terstruktur** memakai `log/slog`: `LOG_FORMAT=json` untuk produksi,
+  default `text` untuk terminal. Satu baris per request berisi method, path,
+  status, durasi, IP, `request_id`, dan `user_id` bila request terautentikasi.
+  Level mengikuti status (5xx error, 4xx warn).
+- Label metrik memakai **template route** (`/api/songs/:id`), bukan path mentah,
+  supaya jumlah deret tidak meledak mengikuti id.
+- Panggilan `log.Printf` lama ikut dialirkan ke slog lewat bridge, jadi
+  formatnya seragam tanpa migrasi besar sekaligus.
+
 ---
 
 ## Catatan Desain
@@ -782,6 +803,7 @@ go test ./...
 | `internal/service` (mail) | Pembentukan URL reset, escaping XSS di nama user, encoding token |
 | `internal/websocket` | Broadcast, exclude pengirim, buang client lambat, fan-out broker antar instance (skip origin + tertarget), broker mati tetap melayani lokal, **akses konkuren (`-race`)**, shutdown |
 | `internal/worker` | Handler terdaftar dipanggil, handler gagal → retry, job tanpa handler → dead-letter, antrean kosong tidak error |
+| `pkg/logging` | Output JSON + bridge `log.Printf` ke slog, format text |
 
 Test auth service dan mail service jalan **tanpa Postgres dan tanpa Redis** —
 dependency-nya interface (`UserStore`, `TokenStore`, `Mailer`) dengan implementasi
@@ -799,11 +821,14 @@ auth + rotasi refresh token, invalidasi cache artist→album, guard delete 409,
 bentuk payload (artist/album/user ter-preload), proteksi mass assignment,
 envelope pagination, kode error, pencarian (termasuk typo), library, playback
 dan media, sosial (follow, feed, notifikasi), genre, rekomendasi, chart,
-singleflight + stale-while-revalidate cache, round-trip broker Redis, dan
-antrean job (backoff + dead-letter).
+singleflight + stale-while-revalidate cache, round-trip broker Redis, antrean
+job (backoff + dead-letter), serta observability (request id, `/ready`,
+`/metrics`).
 
 ## Belum Dikerjakan
 
+- Tracing terdistribusi (OpenTelemetry) belum ada; request id + log terstruktur
+  sudah cukup untuk pelacakan dalam satu proses
 - Flush play count & resize gambar dari rencana worker: play count sengaja
   tetap dicatat sinkron supaya feed dan chart deterministik di test; resize
   gambar menunggu endpoint unggah gambar (cover/avatar) yang belum ada
