@@ -25,6 +25,7 @@ type Handlers struct {
 	Genre          *handler.GenreHandler
 	Recommendation *handler.RecommendationHandler
 	Chart          *handler.ChartHandler
+	Health         *handler.HealthHandler
 	WS             *handler.WSHandler
 }
 
@@ -37,6 +38,12 @@ func SetupRoutes(app *fiber.App, h *Handlers, mw *Middlewares) {
 	app.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok", "message": "Spotify backend is running"})
 	})
+
+	// Endpoint operasional, di luar prefix /api:
+	//   /ready   -> kesiapan dependency (dipakai orchestrator/load balancer)
+	//   /metrics -> format eksposisi Prometheus
+	app.Get("/ready", h.Health.Ready)
+	app.Get("/metrics", h.Health.Metrics)
 
 	api := app.Group("/api")
 

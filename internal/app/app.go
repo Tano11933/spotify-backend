@@ -12,6 +12,8 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 
@@ -135,6 +137,16 @@ func New(cfg Config) (*App, error) {
 
 	cacheStore := cache.NewStore(cfg.Redis)
 
+	// --- Observability ----------------------------------------------------
+	//
+	// Registry dibuat per aplikasi, bukan memakai registry global, supaya
+	// beberapa instance aplikasi dalam satu proses (mis. test) tidak bentrok
+	// saat mendaftarkan kolektor yang sama. Go collector disertakan supaya
+	// goroutine, memori, dan GC ikut terlihat di /metrics.
+	registry := prometheus.NewRegistry()
+	registry.MustRegister(collectors.NewGoCollector())
+	httpMetrics := middleware.NewHTTPMetrics(registry)
+
 	// Mailer dibungkus: kegagalan kirim pertama diantrekan untuk dicoba ulang
 	// worker, sementara SMTP yang sehat tidak berubah perilakunya.
 	jobQueue := queue.New(cfg.Redis, cfg.QueueName)
@@ -195,6 +207,7 @@ func New(cfg Config) (*App, error) {
 		Genre:          handler.NewGenreHandler(genreService),
 		Recommendation: handler.NewRecommendationHandler(recommendationService),
 		Chart:          handler.NewChartHandler(chartService),
+		Health:         handler.NewHealthHandler(cfg.DB, cfg.Redis, registry),
 		WS:             handler.NewWSHandler(hub, songService),
 	}
 
@@ -218,6 +231,14 @@ func New(cfg Config) (*App, error) {
 	// middleware sesuai urutan pendaftaran; kalau dipasang belakangan, request
 	// preflight OPTIONS akan lebih dulu tertangkap route matcher (405).
 	fiberApp.Use(middleware.CORS(cfg.CORSOrigins))
+
+	// Observability dipasang setelah CORS dan sebelum route:
+	//   RequestID  -> menyiapkan id yang dipakai logger & response header
+	//   Logger     -> mencatat SEMUA request, termasuk 404
+	//   HTTPMetrics-> menghitung request per template route
+	fiberApp.Use(middleware.RequestID())
+	fiberApp.Use(middleware.Logger())
+	fiberApp.Use(httpMetrics.Middleware())
 
 	router.SetupRoutes(fiberApp, h, mw)
 
