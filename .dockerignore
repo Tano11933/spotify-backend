@@ -1,0 +1,12 @@
+# Konteks build tidak perlu membawa berkas berikut ke dalam image.
+.git
+.github
+.env
+.env.*
+uploads/
+tmp/
+*.test
+*.out
+*.exe
+Dockerfile*
+docker-compose*.yml

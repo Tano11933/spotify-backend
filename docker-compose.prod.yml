@@ -1,0 +1,113 @@
+# Full-stack backend untuk demo/showcase: Postgres + Redis + API + worker.
+#
+# Berbeda dari docker-compose.yml (development, hanya DB & Redis), file ini
+# membangun image aplikasi. Port DB/Redis sengaja TIDAK diekspos ke host.
+#
+# `name:` memberi project Compose ini nama sendiri, supaya container/volume-nya
+# tidak bentrok dengan stack development (service-nya sama-sama bernama
+# postgres/redis, dan tanpa ini Compose akan saling menimpa).
+#
+# Pemakaian (dari root spotify-backend):
+#   docker compose -f docker-compose.prod.yml up --build -d
+#   docker compose -f docker-compose.prod.yml logs -f api
+#
+# JWT_SECRET & JWT_REFRESH_SECRET dibaca dari .env (lihat .env.example);
+# compose akan menolak start dengan pesan jelas kalau keduanya kosong.
+#
+# Frontend dijalankan dari repo spotify-frontend (Dockerfile-nya sendiri).
+
+name: spotify-backend-prod
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${DB_USER:-spotify}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-spotify123}
+      POSTGRES_DB: ${DB_NAME:-spotify_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-spotify} -d ${DB_NAME:-spotify_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    build: .
+    environment: &app_env
+      # Di dalam jaringan compose, host database adalah NAMA SERVICE, bukan
+      # localhost (localhost di dalam container menunjuk container itu sendiri).
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-spotify}
+      DB_PASSWORD: ${DB_PASSWORD:-spotify123}
+      DB_NAME: ${DB_NAME:-spotify_db}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      APP_PORT: 9000
+
+      # Wajib: compose berhenti dengan pesan jelas kalau nilainya kosong.
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET wajib diisi, lihat .env.example}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET wajib diisi, lihat .env.example}
+
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
+      UPLOAD_DIR: /app/uploads
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+
+      # SMTP opsional: kosong berarti LogMailer (email dicetak ke log api).
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-}
+      SMTP_FROM_NAME: ${SMTP_FROM_NAME:-}
+      SMTP_ENCRYPTION: ${SMTP_ENCRYPTION:-starttls}
+    ports:
+      - "${APP_PORT:-9000}:9000"
+    volumes:
+      - uploads_data:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Worker memakai image yang sama, hanya command-nya berbeda. Ia menangani
+  # retry email dan refresh chart terjadwal (lihat README bagian Background
+  # worker).
+  worker:
+    build: .
+    command: ["./worker"]
+    environment: *app_env
+    # Worker tidak membuka port HTTP, jadi healthcheck bawaan image (yang
+    # memanggil /health) tidak berlaku untuknya.
+    healthcheck:
+      disable: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      # Menunggu API healthy berarti migrasi sudah selesai: API menjalankan
+      # AutoMigrate sebelum Listen, dan chart materialized view dibuat di
+      # migrasi SQL. Tanpa ini, refresh pertama bisa balapan dengan migrasi.
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  uploads_data:
