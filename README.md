@@ -120,6 +120,9 @@ go run ./cmd/worker
 Migrasi tabel berjalan otomatis via GORM AutoMigrate saat startup. Tidak ada
 perintah migrasi terpisah.
 
+> Mau versi Docker satu perintah (api + worker + Postgres + Redis)? Lihat
+> `DOCKER.md` Mode 2.
+
 ```bash
 curl http://127.0.0.1:9000/health
 # {"status":"ok","message":"Spotify backend is running"}
@@ -809,6 +812,20 @@ Test auth service dan mail service jalan **tanpa Postgres dan tanpa Redis** —
 dependency-nya interface (`UserStore`, `TokenStore`, `Mailer`) dengan implementasi
 tiruan in-memory di file test.
 
+### CI (GitHub Actions)
+
+`.github/workflows/ci.yml` berjalan di setiap push ke `main` dan pull request:
+
+| Job | Isi |
+|---|---|
+| `quality` | `gofmt` (gagal kalau ada file belum diformat), `go vet`, `go build`, `go test ./...` |
+| `integration` | `go test -tags=integration ./test/integration/...` |
+
+Test unit tidak butuh service container; job integration menyalakan Postgres +
+Redis sementara lewat testcontainers (runner GitHub sudah menyediakan Docker).
+Versi Go mengikuti `go.mod` lewat `go-version-file`, jadi tidak ada dua sumber
+kebenaran.
+
 ### Integration test
 
 ```bash
@@ -835,8 +852,6 @@ job (backoff + dead-letter), serta observability (request id, `/ready`,
 - Handler layer belum punya unit test (dengan service tiruan)
 - Browse lanjutan: halaman New Releases & kategori kurasi manual (sekarang
   browse memakai genre), plus chart yang di-refresh worker terjadwal
-- Docker full-stack demo (`Dockerfile` backend & frontend +
-  `docker-compose.prod.yml`) — lihat `DOCKER.md`
 - Cursor pagination untuk feed/history (list katalog sudah offset-based)
 - Pipeline media lanjutan: resize gambar cover/avatar & ekstraksi metadata
   audio (durasi/BPM) dari berkas yang diunggah
