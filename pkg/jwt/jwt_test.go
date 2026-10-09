@@ -10,7 +10,6 @@ import (
 	"github.com/google/uuid"
 )
 
-
 const (
 	accessSecret  = "access-secret-for-testing-only"
 	refreshSecret = "refresh-secret-for-testing-only"

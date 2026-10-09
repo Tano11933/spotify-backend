@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Hak minimum: CI hanya membaca kode.
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Format, vet, build, unit test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # Versi Go mengikuti go.mod, bukan ditulis ulang di sini.
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "File berikut belum diformat (jalankan gofmt -w):"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - run: go vet ./...
+
+      - run: go build ./...
+
+      # Test unit tidak butuh Postgres/Redis (dependency-nya interface dengan
+      # implementasi tiruan), jadi bisa jalan tanpa service container.
+      - run: go test ./... -count=1
+
+  integration:
+    name: Integration test (testcontainers)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Runner GitHub sudah menyediakan Docker; testcontainers menyalakan
+      # Postgres/Redis sementara untuk suite ini.
+      - run: go test -tags=integration -count=1 ./test/integration/...

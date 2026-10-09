@@ -13,10 +13,9 @@ import (
 type Encryption string
 
 const (
-
 	EncryptionStartTLS Encryption = "starttls"
-	EncryptionSSLTLS Encryption = "ssltls"
-	EncryptionNone Encryption = "none"
+	EncryptionSSLTLS   Encryption = "ssltls"
+	EncryptionNone     Encryption = "none"
 )
 
 type Config struct {

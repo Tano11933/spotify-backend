@@ -32,9 +32,9 @@ func NewRateLimiter(rdb *redis.Client) *RateLimiter {
 }
 
 type RateLimitConfig struct {
-	Name string
-	Max int
-	Window time.Duration
+	Name    string
+	Max     int
+	Window  time.Duration
 	KeyFunc func(c *fiber.Ctx) string
 }
 

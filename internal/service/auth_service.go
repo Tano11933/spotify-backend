@@ -212,7 +212,7 @@ func (s *AuthService) ForgotPassword(ctx context.Context, req model.ForgotPasswo
 	user, err := s.userRepo.FindByEmail(ctx, email)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			return nil 
+			return nil
 		}
 		return fmt.Errorf("find user by email: %w", err)
 	}

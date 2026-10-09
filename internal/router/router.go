@@ -336,7 +336,7 @@ func registerSearchRoutes(api fiber.Router, h *Handlers) {
 	api.Get("/search", h.Search.Search)
 }
 
-func registerWebSocketRoute(app *fiber.App, h *Handlers, mw *Middlewares) {	// /ws didaftarkan di app, bukan di grup /api, karena WebSocket bukan
+func registerWebSocketRoute(app *fiber.App, h *Handlers, mw *Middlewares) { // /ws didaftarkan di app, bukan di grup /api, karena WebSocket bukan
 	// endpoint REST.
 	//
 	// Rantainya: autentikasi → pastikan ini benar-benar upgrade → tangani socket.
