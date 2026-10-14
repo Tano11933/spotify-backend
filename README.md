@@ -234,6 +234,22 @@ yang gagal validasi juga menyertakan `details: [{field, rule}]`.
 nilai di luar rentang di-clamp. Berlaku untuk `/api/artists`, `/api/albums`,
 `/api/songs`, `/api/artists/:id/songs`, `/api/playlists`, `/api/playlists/public`.
 
+**Feed dan riwayat juga mendukung cursor pagination (keyset).** Keduanya
+menerima `?cursor=<opaque>` sebagai ganti `offset`; cursor didapat dari field
+`next_cursor` di response halaman sebelumnya, dan hanya muncul kalau masih ada
+halaman berikutnya:
+
+```json
+{ "items": [], "total": 120, "limit": 20, "offset": 0, "next_cursor": "eyJ0IjoiMjAyNi0xMC0xMlQxMDozMDowMFoiLCJpIjo0Mn0" }
+```
+
+Bedanya dengan offset: `WHERE (waktu, id) < (nilai terakhir)` membuat biaya
+halaman berikutnya tidak tumbuh mengikuti kedalaman (OFFSET harus memindai dan
+membuang baris yang dilewati). Tie-breaker `id` dipakai karena waktu bisa
+kembar. Cursor tidak ditandatangani — isinya bukan otorisasi, hanya posisi;
+cursor rusak dibalas `400 VALIDATION_FAILED`. Mode offset tetap berjalan
+seperti sebelumnya, jadi client lama tidak terpengaruh.
+
 **Autentikasi:** kirim header `Authorization: Bearer <access_token>`.
 
 Kolom akses:
@@ -548,7 +564,7 @@ user di path, jadi tidak ada permukaan untuk IDOR.
 
 | Method | Endpoint | Akses | Keterangan |
 |---|---|---|---|
-| GET | `/api/me/feed?limit=&offset=` | 🔒 | Aktivitas user yang diikuti: lagu diputar & playlist publik dibuat |
+| GET | `/api/me/feed?limit=&offset=&cursor=` | 🔒 | Aktivitas user yang diikuti: lagu diputar & playlist publik dibuat |
 | GET | `/api/me/notifications?limit=&offset=` | 🔒 | Daftar notifikasi; response menyertakan jumlah `unread` |
 | POST | `/api/me/notifications/read` | 🔒 | Tandai semua sudah dibaca (idempoten) |
 
@@ -595,7 +611,7 @@ hilang saat tab ditutup.
 | GET | `/api/me/player/queue` | Antrean "next up" (envelope) |
 | POST | `/api/me/player/queue` | Tambah lagu ke akhir antrean `{song_id}` |
 | DELETE | `/api/me/player/queue/:songId` | Hapus kemunculan pertama lagu (idempoten) |
-| GET | `/api/me/history` | Riwayat putar `{played_at, song}`, terbaru dulu |
+| GET | `/api/me/history` | Riwayat putar `{played_at, song}`, terbaru dulu. Mendukung `?cursor=` |
 
 > Pesan WebSocket `song:playing` dari client masih didukung demi kompatibilitas,
 > tapi `POST /api/me/player/play` adalah jalur yang disarankan: satu request
@@ -839,8 +855,8 @@ bentuk payload (artist/album/user ter-preload), proteksi mass assignment,
 envelope pagination, kode error, pencarian (termasuk typo), library, playback
 dan media, sosial (follow, feed, notifikasi), genre, rekomendasi, chart,
 singleflight + stale-while-revalidate cache, round-trip broker Redis, antrean
-job (backoff + dead-letter), serta observability (request id, `/ready`,
-`/metrics`).
+job (backoff + dead-letter), observability (request id, `/ready`, `/metrics`),
+dan cursor pagination feed/riwayat.
 
 ## Belum Dikerjakan
 
@@ -852,6 +868,7 @@ job (backoff + dead-letter), serta observability (request id, `/ready`,
 - Handler layer belum punya unit test (dengan service tiruan)
 - Browse lanjutan: halaman New Releases & kategori kurasi manual (sekarang
   browse memakai genre), plus chart yang di-refresh worker terjadwal
-- Cursor pagination untuk feed/history (list katalog sudah offset-based)
+- Cursor pagination untuk daftar katalog: sengaja tetap offset karena
+  halaman-halamannya di-cache dan dipotong di memori
 - Pipeline media lanjutan: resize gambar cover/avatar & ekstraksi metadata
   audio (durasi/BPM) dari berkas yang diunggah
