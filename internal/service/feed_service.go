@@ -79,13 +79,44 @@ func (s *FeedService) RecordPlaylistCreated(ctx context.Context, userID uuid.UUI
 
 // GetFeed merakit aktivitas user yang diikuti viewer. Relasinya diambil dengan
 // tiga query bulk (user, lagu, playlist), bukan query per baris feed.
-func (s *FeedService) GetFeed(ctx context.Context, userID uuid.UUID, params pagination.Params) (pagination.Page[FeedEntry], error) {
-	activities, total, err := s.activityRepo.FindFeed(ctx, userID, params.Limit, params.Offset)
-	if err != nil {
-		return pagination.Page[FeedEntry]{}, err
+//
+// Mendukung dua mode sekaligus: offset (default, perilaku lama) dan cursor
+// (keyset). Mode cursor mengambil baris yang lebih tua dari posisi terakhir,
+// jadi biayanya tidak tumbuh mengikuti halaman seperti OFFSET.
+func (s *FeedService) GetFeed(ctx context.Context, userID uuid.UUID, params pagination.Params, cursor *pagination.Cursor) (pagination.CursorPage[FeedEntry], error) {
+	// Satu baris ekstra diambil untuk tahu apakah masih ada halaman
+	// berikutnya, tanpa perlu query tambahan.
+	fetch := params.Limit + 1
+
+	var activities []model.Activity
+	var total int64
+	var err error
+
+	if cursor != nil {
+		total, err = s.activityRepo.CountFeed(ctx, userID)
+		if err == nil {
+			activities, err = s.activityRepo.FindFeedAfter(ctx, userID, cursor.Time, cursor.ID, fetch)
+		}
+	} else {
+		activities, total, err = s.activityRepo.FindFeed(ctx, userID, fetch, params.Offset)
 	}
+	if err != nil {
+		return pagination.CursorPage[FeedEntry]{}, err
+	}
+
+	hasMore := len(activities) > params.Limit
+	if hasMore {
+		activities = activities[:params.Limit]
+	}
+
+	nextCursor := ""
+	if hasMore && len(activities) > 0 {
+		last := activities[len(activities)-1]
+		nextCursor = pagination.EncodeCursor(pagination.Cursor{Time: last.CreatedAt, ID: last.ID})
+	}
+
 	if len(activities) == 0 {
-		return pagination.NewPage([]FeedEntry{}, total, params), nil
+		return pagination.NewCursorPage([]FeedEntry{}, total, params, nextCursor), nil
 	}
 
 	userIDs := make([]uuid.UUID, 0, len(activities))
@@ -113,17 +144,17 @@ func (s *FeedService) GetFeed(ctx context.Context, userID uuid.UUID, params pagi
 
 	users, err := s.userRepo.FindByIDs(ctx, userIDs)
 	if err != nil {
-		return pagination.Page[FeedEntry]{}, err
+		return pagination.CursorPage[FeedEntry]{}, err
 	}
 
 	songs, err := s.songRepo.FindByIDs(ctx, songIDs)
 	if err != nil {
-		return pagination.Page[FeedEntry]{}, err
+		return pagination.CursorPage[FeedEntry]{}, err
 	}
 
 	playlists, err := s.playlistRepo.FindByIDs(ctx, playlistIDs)
 	if err != nil {
-		return pagination.Page[FeedEntry]{}, err
+		return pagination.CursorPage[FeedEntry]{}, err
 	}
 
 	usersByID := make(map[uuid.UUID]model.User, len(users))
@@ -182,5 +213,5 @@ func (s *FeedService) GetFeed(ctx context.Context, userID uuid.UUID, params pagi
 		entries = append(entries, entry)
 	}
 
-	return pagination.NewPage(entries, total, params), nil
+	return pagination.NewCursorPage(entries, total, params, nextCursor), nil
 }

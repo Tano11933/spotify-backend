@@ -31,7 +31,12 @@ func (h *FeedHandler) GetFeed(c *fiber.Ctx) error {
 		return response.BadRequest(c, err.Error())
 	}
 
-	page, err := h.service.GetFeed(c.UserContext(), userID, params)
+	cursor, err := pagination.ParseCursor(c.Query("cursor"))
+	if err != nil {
+		return response.BadRequest(c, err.Error())
+	}
+
+	page, err := h.service.GetFeed(c.UserContext(), userID, params, cursor)
 	if err != nil {
 		log.Printf("feed handler error on %s %s: %v", c.Method(), c.Path(), err)
 		return response.Internal(c)

@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -34,11 +35,33 @@ func (r *ActivityRepository) FindFeed(ctx context.Context, userID uuid.UUID, lim
 	}
 
 	err := r.feedQuery(ctx, userID).
-		Order("activities.created_at DESC").
+		Order("activities.created_at DESC, activities.id DESC").
 		Limit(limit).
 		Offset(offset).
 		Find(&activities).Error
 	return activities, total, err
+}
+
+// CountFeed menghitung total aktivitas feed tanpa memuat barisnya. Dipakai
+// mode cursor yang tidak memakai OFFSET tapi tetap melaporkan total.
+func (r *ActivityRepository) CountFeed(ctx context.Context, userID uuid.UUID) (int64, error) {
+	var total int64
+	err := r.feedQuery(ctx, userID).Count(&total).Error
+	return total, err
+}
+
+// FindFeedAfter mengambil aktivitas SETELAH posisi cursor (keyset): baris yang
+// lebih tua dari pasangan (created_at, id). Perbandingan row-value dipakai
+// supaya tie-breaker id ikut terhitung dalam satu ekspresi; ORDER BY harus
+// memakai pasangan kolom yang sama persis.
+func (r *ActivityRepository) FindFeedAfter(ctx context.Context, userID uuid.UUID, before time.Time, beforeID uint64, limit int) ([]model.Activity, error) {
+	var activities []model.Activity
+	err := r.feedQuery(ctx, userID).
+		Where("(activities.created_at, activities.id) < (?, ?)", before, beforeID).
+		Order("activities.created_at DESC, activities.id DESC").
+		Limit(limit).
+		Find(&activities).Error
+	return activities, err
 }
 
 func (r *ActivityRepository) feedQuery(ctx context.Context, userID uuid.UUID) *gorm.DB {
