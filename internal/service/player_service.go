@@ -152,13 +152,43 @@ func (s *PlayerService) RemoveFromQueue(ctx context.Context, userID uuid.UUID, s
  * Riwayat
  * ---------------------------------------------------------------------- */
 
-func (s *PlayerService) GetHistory(ctx context.Context, userID uuid.UUID, params pagination.Params) (pagination.Page[PlayHistoryEntry], error) {
-	entries, total, err := s.repo.FindHistory(ctx, userID, params.Limit, params.Offset)
-	if err != nil {
-		return pagination.Page[PlayHistoryEntry]{}, err
+// GetHistory mengembalikan riwayat putar user. Mendukung dua mode sekaligus:
+// offset (default, perilaku lama) dan cursor (keyset); `next_cursor` diisi
+// kalau masih ada halaman berikutnya.
+func (s *PlayerService) GetHistory(ctx context.Context, userID uuid.UUID, params pagination.Params, cursor *pagination.Cursor) (pagination.CursorPage[PlayHistoryEntry], error) {
+	// Satu baris ekstra diambil untuk tahu apakah masih ada halaman
+	// berikutnya, tanpa perlu query tambahan.
+	fetch := params.Limit + 1
+
+	var entries []model.PlayHistory
+	var total int64
+	var err error
+
+	if cursor != nil {
+		total, err = s.repo.CountHistory(ctx, userID)
+		if err == nil {
+			entries, err = s.repo.FindHistoryAfter(ctx, userID, cursor.Time, cursor.ID, fetch)
+		}
+	} else {
+		entries, total, err = s.repo.FindHistory(ctx, userID, fetch, params.Offset)
 	}
+	if err != nil {
+		return pagination.CursorPage[PlayHistoryEntry]{}, err
+	}
+
+	hasMore := len(entries) > params.Limit
+	if hasMore {
+		entries = entries[:params.Limit]
+	}
+
+	nextCursor := ""
+	if hasMore && len(entries) > 0 {
+		last := entries[len(entries)-1]
+		nextCursor = pagination.EncodeCursor(pagination.Cursor{Time: last.PlayedAt, ID: last.ID})
+	}
+
 	if len(entries) == 0 {
-		return pagination.NewPage([]PlayHistoryEntry{}, total, params), nil
+		return pagination.NewCursorPage([]PlayHistoryEntry{}, total, params, nextCursor), nil
 	}
 
 	// Ambil lagunya sekaligus (satu query + preload), lalu susun ulang sesuai
@@ -171,7 +201,7 @@ func (s *PlayerService) GetHistory(ctx context.Context, userID uuid.UUID, params
 
 	songs, err := s.songRepo.FindByIDs(ctx, ids)
 	if err != nil {
-		return pagination.Page[PlayHistoryEntry]{}, err
+		return pagination.CursorPage[PlayHistoryEntry]{}, err
 	}
 
 	byID := make(map[uint]model.Song, len(songs))
@@ -189,7 +219,7 @@ func (s *PlayerService) GetHistory(ctx context.Context, userID uuid.UUID, params
 		result = append(result, PlayHistoryEntry{PlayedAt: entry.PlayedAt, Song: song})
 	}
 
-	return pagination.NewPage(result, total, params), nil
+	return pagination.NewCursorPage(result, total, params, nextCursor), nil
 }
 
 func (s *PlayerService) findSong(ctx context.Context, songID uint) (*model.Song, error) {

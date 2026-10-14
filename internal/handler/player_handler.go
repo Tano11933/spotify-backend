@@ -158,7 +158,12 @@ func (h *PlayerHandler) GetHistory(c *fiber.Ctx) error {
 		return response.BadRequest(c, err.Error())
 	}
 
-	page, err := h.service.GetHistory(c.UserContext(), userID, params)
+	cursor, err := pagination.ParseCursor(c.Query("cursor"))
+	if err != nil {
+		return response.BadRequest(c, err.Error())
+	}
+
+	page, err := h.service.GetHistory(c.UserContext(), userID, params, cursor)
 	if err != nil {
 		return playerError(c, err)
 	}

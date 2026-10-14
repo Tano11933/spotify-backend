@@ -155,11 +155,37 @@ func (r *PlayerRepository) FindHistory(ctx context.Context, userID uuid.UUID, li
 	err := r.db.WithContext(ctx).
 		Model(&model.PlayHistory{}).
 		Where("user_id = ?", userID).
-		Order("played_at DESC").
+		Order("played_at DESC, id DESC").
 		Limit(limit).
 		Offset(offset).
 		Find(&entries).Error
 	return entries, total, err
+}
+
+// CountHistory menghitung total riwayat user tanpa memuat barisnya. Dipakai
+// mode cursor yang tidak memakai OFFSET tapi tetap melaporkan total.
+func (r *PlayerRepository) CountHistory(ctx context.Context, userID uuid.UUID) (int64, error) {
+	var total int64
+	err := r.db.WithContext(ctx).
+		Model(&model.PlayHistory{}).
+		Where("user_id = ?", userID).
+		Count(&total).Error
+	return total, err
+}
+
+// FindHistoryAfter mengambil riwayat SETELAH posisi cursor (keyset): baris
+// yang lebih tua dari pasangan (played_at, id). Row-value comparison dipakai
+// supaya tie-breaker id ikut terhitung dalam satu ekspresi.
+func (r *PlayerRepository) FindHistoryAfter(ctx context.Context, userID uuid.UUID, before time.Time, beforeID uint64, limit int) ([]model.PlayHistory, error) {
+	var entries []model.PlayHistory
+	err := r.db.WithContext(ctx).
+		Model(&model.PlayHistory{}).
+		Where("user_id = ?", userID).
+		Where("(played_at, id) < (?, ?)", before, beforeID).
+		Order("played_at DESC, id DESC").
+		Limit(limit).
+		Find(&entries).Error
+	return entries, err
 }
 
 // IncrementPlayCount menaikkan penghitung di database secara atomik —
