@@ -165,6 +165,10 @@ docker run --rm -v "${PWD}:/app" -w /app golang:1.26 go test -race ./...
 | `APP_PORT` | — | `9000` | Port HTTP server |
 | `CACHE_TTL` | — | `5m` | TTL cache artist & album |
 | `LOG_FORMAT` | — | `text` | Format log: `text` (terminal) \| `json` (produksi) |
+| `TRACING_ENABLED` | — | `false` | Nyalakan OpenTelemetry tracing |
+| `OTEL_TRACES_EXPORTER` | — | `otlp` | `otlp` \| `stdout` (demo tanpa collector) |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | — | `http://localhost:4318` | Endpoint collector OTLP/HTTP |
+| `OTEL_SERVICE_NAME` | — | `spotify-api` / `spotify-worker` | Nama service di resource span |
 | `JWT_SECRET` | ✅ | — | Secret access token — **app tidak start kalau kosong** |
 | `JWT_REFRESH_SECRET` | ✅ | — | Secret refresh token, harus **berbeda** dari di atas |
 | `JWT_ACCESS_TTL` | — | `15m` | Masa berlaku access token |
@@ -767,8 +771,18 @@ go run ./cmd/worker
   header supaya bisa disebut saat melaporkan masalah.
 - **Log terstruktur** memakai `log/slog`: `LOG_FORMAT=json` untuk produksi,
   default `text` untuk terminal. Satu baris per request berisi method, path,
-  status, durasi, IP, `request_id`, dan `user_id` bila request terautentikasi.
-  Level mengikuti status (5xx error, 4xx warn).
+  status, durasi, IP, `request_id`, `user_id` bila request terautentikasi, dan
+  `trace_id` saat tracing aktif. Level mengikuti status (5xx error, 4xx warn).
+- **Tracing (opsional)** lewat OpenTelemetry. `TRACING_ENABLED=true` menyalakan:
+  - satu span HTTP per request dengan nama `METHOD /route` dan atribut
+    `http.request.method`, `http.route`, `http.response.status_code`,
+    `request.id`, `user.id`; error yang dikembalikan handler menandai span Error;
+  - satu span per job worker dengan nama `job <tipe>` dan atribut `job.id`,
+    `job.attempt`.
+  Exporter dipilih lewat `OTEL_TRACES_EXPORTER`: `otlp` (default, kirim ke
+  `OTEL_EXPORTER_OTLP_ENDPOINT`, default `http://localhost:4318`) atau `stdout`
+  untuk demo tanpa collector. Propagasi W3C `traceparent` disiapkan, jadi
+  `trace_id` bisa disambung dari log ke trace dan sebaliknya.
 - Label metrik memakai **template route** (`/api/songs/:id`), bukan path mentah,
   supaya jumlah deret tidak meledak mengikuti id.
 - Panggilan `log.Printf` lama ikut dialirkan ke slog lewat bridge, jadi
@@ -821,7 +835,8 @@ go test ./...
 | `internal/service` (auth) | Register (hash bcrypt, normalisasi email, role dipaksa, duplikat, batas panjang password rune vs byte), login (error identik untuk password salah & email tak dikenal), refresh (rotasi + pencabutan), forgot/reset (sekali pakai, urutan validasi) |
 | `internal/service` (mail) | Pembentukan URL reset, escaping XSS di nama user, encoding token |
 | `internal/websocket` | Broadcast, exclude pengirim, buang client lambat, fan-out broker antar instance (skip origin + tertarget), broker mati tetap melayani lokal, **akses konkuren (`-race`)**, shutdown |
-| `internal/worker` | Handler terdaftar dipanggil, handler gagal → retry, job tanpa handler → dead-letter, antrean kosong tidak error |
+| `internal/middleware` | Tracing: nama span `METHOD /route`, atribut semconv + `request.id`, span kind server, status Error untuk 5xx |
+| `internal/worker` | Handler terdaftar dipanggil, handler gagal → retry, job tanpa handler → dead-letter, antrean kosong tidak error, span per job (sukses/gagal) |
 | `pkg/logging` | Output JSON + bridge `log.Printf` ke slog, format text |
 
 Test auth service dan mail service jalan **tanpa Postgres dan tanpa Redis** —
@@ -860,8 +875,8 @@ dan cursor pagination feed/riwayat.
 
 ## Belum Dikerjakan
 
-- Tracing terdistribusi (OpenTelemetry) belum ada; request id + log terstruktur
-  sudah cukup untuk pelacakan dalam satu proses
+- Collector OpenTelemetry tidak disertakan di `docker-compose.prod.yml`;
+  tracing bisa dinyalakan dengan exporter `stdout` atau collector eksternal
 - Flush play count & resize gambar dari rencana worker: play count sengaja
   tetap dicatat sinkron supaya feed dan chart deterministik di test; resize
   gambar menunggu endpoint unggah gambar (cover/avatar) yang belum ada
