@@ -31,6 +31,7 @@ import (
 	"spotify-backend/pkg/cache"
 	"spotify-backend/pkg/database"
 	"spotify-backend/pkg/logging"
+	"spotify-backend/pkg/tracing"
 )
 
 const defaultChartRefreshInterval = 5 * time.Minute
@@ -43,6 +44,17 @@ func main() {
 	// Logger disiapkan paling awal supaya log startup ikut terstruktur,
 	// seragam dengan proses API.
 	logging.Setup(os.Getenv("LOG_FORMAT"))
+
+	// Tracing opsional (TRACING_ENABLED); span per job dibuat di internal/worker.
+	shutdownTracing, err := tracing.Setup(context.Background(), "spotify-worker")
+	if err != nil {
+		log.Fatal("Failed to set up tracing: ", err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = shutdownTracing(ctx)
+	}()
 
 	db := database.ConnectPostgres()
 	rdb := cache.ConnectRedis()

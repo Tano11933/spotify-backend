@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Logger mencatat satu baris terstruktur per request SETELAH selesai, jadi
@@ -34,6 +35,11 @@ func Logger() fiber.Handler {
 		}
 		if userID, ok := UserIDFromContext(c); ok {
 			attrs = append(attrs, "user_id", userID.String())
+		}
+		// Trace id disambungkan ke log supaya satu request bisa dilacak dari
+		// log ke trace (dan sebaliknya) saat tracing aktif.
+		if spanContext := trace.SpanContextFromContext(c.UserContext()); spanContext.IsValid() {
+			attrs = append(attrs, "trace_id", spanContext.TraceID().String())
 		}
 
 		level := slog.LevelInfo

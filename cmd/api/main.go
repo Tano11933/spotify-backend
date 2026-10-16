@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
 	"os/signal"
@@ -14,6 +15,7 @@ import (
 	"spotify-backend/pkg/cache"
 	"spotify-backend/pkg/database"
 	"spotify-backend/pkg/logging"
+	"spotify-backend/pkg/tracing"
 )
 
 func main() {
@@ -24,6 +26,18 @@ func main() {
 	// Logger disiapkan paling awal supaya log startup (koneksi DB/Redis, dsb)
 	// ikut terstruktur. LOG_FORMAT=json untuk produksi; default text.
 	logging.Setup(os.Getenv("LOG_FORMAT"))
+
+	// Tracing opsional (TRACING_ENABLED). Shutdown-nya dipanggil saat proses
+	// berhenti supaya span yang masih di buffer batch ikut terkirim.
+	shutdownTracing, err := tracing.Setup(context.Background(), "spotify-api")
+	if err != nil {
+		log.Fatal("Failed to set up tracing: ", err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = shutdownTracing(ctx)
+	}()
 
 	// --- Infrastruktur ----------------------------------------------------
 	db := database.ConnectPostgres()

@@ -66,6 +66,12 @@ services:
       UPLOAD_DIR: /app/uploads
       LOG_FORMAT: ${LOG_FORMAT:-text}
 
+      # Tracing opsional; lihat README bagian Observability.
+      TRACING_ENABLED: ${TRACING_ENABLED:-false}
+      OTEL_TRACES_EXPORTER: ${OTEL_TRACES_EXPORTER:-otlp}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-}
+
       # SMTP opsional: kosong berarti LogMailer (email dicetak ke log api).
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-}

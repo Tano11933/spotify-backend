@@ -234,9 +234,11 @@ func New(cfg Config) (*App, error) {
 
 	// Observability dipasang setelah CORS dan sebelum route:
 	//   RequestID  -> menyiapkan id yang dipakai logger & response header
+	//   Tracing    -> satu span per request; logger membaca trace id-nya
 	//   Logger     -> mencatat SEMUA request, termasuk 404
 	//   HTTPMetrics-> menghitung request per template route
 	fiberApp.Use(middleware.RequestID())
+	fiberApp.Use(middleware.Tracing())
 	fiberApp.Use(middleware.Logger())
 	fiberApp.Use(httpMetrics.Middleware())
 

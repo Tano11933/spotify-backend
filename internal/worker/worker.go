@@ -12,6 +12,10 @@ import (
 	"log"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+
 	"spotify-backend/internal/queue"
 )
 
@@ -100,10 +104,23 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
+// tracerScope adalah nama instrumentasi untuk span job.
+const tracerScope = "spotify-backend/worker"
+
 func (w *Worker) process(ctx context.Context, job *queue.Job) {
+	ctx, span := otel.Tracer(tracerScope).Start(ctx, "job "+job.Type)
+	defer span.End()
+
+	span.SetAttributes(
+		attribute.String("job.id", job.ID),
+		attribute.Int("job.attempt", job.Attempt),
+	)
+
 	handler, ok := w.handlers[job.Type]
 	if !ok {
 		cause := fmt.Errorf("tidak ada handler untuk job %q", job.Type)
+		span.RecordError(cause)
+		span.SetStatus(codes.Error, cause.Error())
 		log.Printf("worker: %v (job=%s), dipindah ke dead-letter", cause, job.ID)
 
 		if err := w.source.DeadLetter(ctx, job, cause); err != nil {
@@ -113,6 +130,8 @@ func (w *Worker) process(ctx context.Context, job *queue.Job) {
 	}
 
 	if err := handler(ctx, job.Payload); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		log.Printf("worker: job %s (%s) gagal: %v", job.ID, job.Type, err)
 
 		if err := w.source.Retry(ctx, job, err); err != nil {
