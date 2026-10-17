@@ -82,6 +82,20 @@ func (s *AlbumService) GetAlbumByID(ctx context.Context, id uint) (*model.Album,
 	return &album, nil
 }
 
+// GetNewReleases mengembalikan album terbaru (release_date menurun).
+//
+// Sengaja TIDAK memakai cache list album: cache itu menyimpan urutan default
+// /api/albums, sedangkan endpoint ini butuh urutan berbeda. Query-nya memakai
+// index idx_albums_release_date, jadi tidak perlu menyalin seluruh list ke
+// memori hanya untuk mengurutkan ulang tiap request.
+func (s *AlbumService) GetNewReleases(ctx context.Context, params pagination.Params) (pagination.Page[model.Album], error) {
+	albums, total, err := s.repo.FindPageNewReleases(ctx, params.Limit, params.Offset)
+	if err != nil {
+		return pagination.Page[model.Album]{}, err
+	}
+	return pagination.NewPage(albums, total, params), nil
+}
+
 func (s *AlbumService) UpdateAlbum(ctx context.Context, album *model.Album) error {
 	if err := s.ensureArtistExists(ctx, album.ArtistID); err != nil {
 		return err

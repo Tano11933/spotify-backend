@@ -154,6 +154,10 @@ func registerCatalogRoutes(api fiber.Router, h *Handlers, mw *Middlewares) {
 
 	albums := api.Group("/albums")
 	albums.Get("/", h.Album.GetAll)
+	// /new-releases didaftarkan SEBELUM /:id. Tanpa urutan ini, Fiber akan
+	// menangkap "new-releases" sebagai nilai parameter id dan endpoint-nya
+	// tidak pernah tercapai.
+	albums.Get("/new-releases", h.Album.GetNewReleases)
 	albums.Get("/:id", h.Album.GetByID)
 	albums.Post("/", chain(adminOnly, h.Album.Create)...)
 	albums.Put("/:id", chain(adminOnly, h.Album.Update)...)

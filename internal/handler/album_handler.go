@@ -72,6 +72,20 @@ func (h *AlbumHandler) GetByID(c *fiber.Ctx) error {
 	return c.JSON(album)
 }
 
+// GetNewReleases menampilkan album terbaru, urut tanggal rilis menurun.
+func (h *AlbumHandler) GetNewReleases(c *fiber.Ctx) error {
+	params, err := pagination.Parse(c.Query("limit"), c.Query("offset"))
+	if err != nil {
+		return response.BadRequest(c, err.Error())
+	}
+
+	page, err := h.service.GetNewReleases(c.UserContext(), params)
+	if err != nil {
+		return respondError(c, "album", err)
+	}
+	return c.JSON(page)
+}
+
 func (h *AlbumHandler) Update(c *fiber.Ctx) error {
 	id, err := parseUintParam(c, "id")
 	if err != nil {

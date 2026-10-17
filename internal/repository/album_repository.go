@@ -86,3 +86,26 @@ func (r *AlbumRepository) Exists(ctx context.Context, id uint) (bool, error) {
 	err := r.db.WithContext(ctx).Model(&model.Album{}).Where("id = ?", id).Count(&count).Error
 	return count > 0, err
 }
+
+// FindPageNewReleases mengembalikan album terbaru berdasarkan tanggal rilis.
+//
+// Pagination-nya langsung di SQL (bukan memotong list cache) karena urutannya
+// berbeda dari /api/albums: di sini release_date menurun, dengan id sebagai
+// tie-breaker supaya album yang rilis di tanggal sama tidak berpindah-pindah
+// antar halaman.
+func (r *AlbumRepository) FindPageNewReleases(ctx context.Context, limit, offset int) ([]model.Album, int64, error) {
+	var albums []model.Album
+	var total int64
+
+	if err := r.db.WithContext(ctx).Model(&model.Album{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	err := r.db.WithContext(ctx).
+		Preload("Artist").
+		Order("release_date DESC, id DESC").
+		Limit(limit).
+		Offset(offset).
+		Find(&albums).Error
+	return albums, total, err
+}
