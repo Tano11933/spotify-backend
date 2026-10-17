@@ -428,6 +428,7 @@ password tidak membuang token.
 | Method | Endpoint | Akses |
 |---|---|---|
 | GET | `/api/albums` | 🌐 *(cache 5 menit)* |
+| GET | `/api/albums/new-releases?limit=&offset=` | 🌐 (urut `release_date` menurun) |
 | GET | `/api/albums/:id` | 🌐 *(cache 5 menit, menyertakan `songs`)* |
 | POST | `/api/albums` | 👑 |
 | PUT | `/api/albums/:id` | 👑 |
@@ -438,6 +439,11 @@ password tidak membuang token.
   "release_date": "2019-04-05T00:00:00Z", "cover_url": "https://example.com/c.jpg" }
 ```
 `422` kalau `artist_id` menunjuk artist yang tidak ada.
+
+`/api/albums/new-releases` memakai urutan `release_date DESC, id DESC` (id
+sebagai tie-breaker) dan **tidak** memakai cache list album karena urutannya
+berbeda dari `/api/albums`; query-nya ditopang index `idx_albums_release_date`
+(migrasi `0009`).
 
 ### Genre
 
