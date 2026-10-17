@@ -90,10 +90,10 @@ func TestMetricsEndpoint(t *testing.T) {
 
 	status, body, _ := doRaw(t, "GET", "/metrics", nil)
 	if status != 200 {
-		t.Fatalf("/metrics = %d, mau 200", status)
+		t.Fatalf("/metrics = %d, mau 200. Body: %.400s", status, body)
 	}
 	if !strings.Contains(body, "go_goroutines") {
-		t.Fatal("metrik runtime Go tidak ikut terekspos")
+		t.Fatalf("metrik runtime Go tidak ikut terekspos. Body: %.400s", body)
 	}
 
 	pattern := regexp.MustCompile(`melodia_http_requests_total\{method="GET",route="/health",status="200"\} (\d+)`)
