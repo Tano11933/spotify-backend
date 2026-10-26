@@ -66,6 +66,10 @@ func (r *PlayerRepository) GetState(ctx context.Context, userID uuid.UUID) (*mod
 // transaksi supaya dua request bersamaan tidak menghasilkan posisi yang sama.
 func (r *PlayerRepository) AppendToQueue(ctx context.Context, userID uuid.UUID, songID uint) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var owner model.User
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").First(&owner, "id = ?", userID).Error; err != nil {
+			return err
+		}
 		var maxPosition int
 		if err := tx.Model(&model.QueueItem{}).
 			Where("user_id = ?", userID).

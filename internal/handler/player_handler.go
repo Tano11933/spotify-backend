@@ -8,6 +8,7 @@ import (
 
 	"spotify-backend/internal/middleware"
 	"spotify-backend/internal/model"
+	"spotify-backend/internal/repository"
 	"spotify-backend/internal/service"
 	"spotify-backend/pkg/pagination"
 	"spotify-backend/pkg/response"
@@ -172,6 +173,8 @@ func (h *PlayerHandler) GetHistory(c *fiber.Ctx) error {
 
 func playerError(c *fiber.Ctx, err error) error {
 	switch {
+	case errors.Is(err, repository.ErrQueueUnavailable):
+		return response.Conflict(c, err.Error())
 	case errors.Is(err, service.ErrSongNotFound):
 		return response.NotFound(c, err.Error())
 

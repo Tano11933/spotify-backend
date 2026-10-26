@@ -303,6 +303,11 @@ func registerPlayerRoutes(api fiber.Router, h *Handlers, mw *Middlewares) {
 	me.Post("/player/play", h.Player.Play)
 
 	me.Get("/player/queue", h.Player.GetQueue)
+	me.Get("/player/queue/entries", h.Player.GetQueueEntries)
+	me.Delete("/player/queue/entries/:entryId", h.Player.RemoveQueueEntry)
+	me.Post("/player/queue/reservations", h.Player.ReserveQueueEntry)
+	me.Post("/player/queue/reservations/:reservationId/confirm", h.Player.ConfirmQueueEntry)
+	me.Delete("/player/queue/reservations/:reservationId", h.Player.ReleaseQueueEntry)
 	me.Post("/player/queue", h.Player.AddToQueue)
 	me.Delete("/player/queue/:songId", h.Player.RemoveFromQueue)
 

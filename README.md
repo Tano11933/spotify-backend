@@ -621,11 +621,22 @@ hilang saat tab ditutup.
 | GET | `/api/me/player/queue` | Antrean "next up" (envelope) |
 | POST | `/api/me/player/queue` | Tambah lagu ke akhir antrean `{song_id}` |
 | DELETE | `/api/me/player/queue/:songId` | Hapus kemunculan pertama lagu (idempoten) |
+| GET | `/api/me/player/queue/entries` | Antrean dengan ID entri terpisah: `{id, position, added_at, song}` |
+| DELETE | `/api/me/player/queue/entries/:entryId` | Hapus entri tertentu milik user (idempoten) |
+| POST | `/api/me/player/queue/reservations` | Reservasi entri berikutnya, atau `{entry_id}` untuk entri tertentu |
+| POST | `/api/me/player/queue/reservations/:reservationId/confirm` | Konsumsi reservasi aktif milik user setelah audio berhasil mulai |
+| DELETE | `/api/me/player/queue/reservations/:reservationId` | Lepaskan reservasi tanpa menghapus entri |
 | GET | `/api/me/history` | Riwayat putar `{played_at, song}`, terbaru dulu. Mendukung `?cursor=` |
 
 > Pesan WebSocket `song:playing` dari client masih didukung demi kompatibilitas,
 > tapi `POST /api/me/player/play` adalah jalur yang disarankan: satu request
 > menangani state, riwayat, penghitung putar, dan broadcast sekaligus.
+
+Reservasi berlaku 60 detik dan tidak menghapus entri sampai dikonfirmasi.
+Pemilihan memakai row lock PostgreSQL sehingga perangkat bersamaan tidak
+mendapat reservasi aktif untuk entri yang sama. Endpoint lama tetap tersedia.
+Detail kontrak, kompatibilitas, dan batasannya ada di
+[antrean playback](docs/playback-queue.md).
 
 ### Media (audio)
 

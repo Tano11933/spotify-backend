@@ -21,11 +21,27 @@ type PlayerState struct {
 // Position dipakai untuk urutan; menyisipkan di tengah berarti menggeser
 // posisi item sesudahnya (belum dibutuhkan sekarang — append sudah cukup).
 type QueueItem struct {
-	ID       uint64    `json:"id" gorm:"primaryKey"`
-	UserID   uuid.UUID `json:"user_id" gorm:"type:uuid;not null;index"`
-	SongID   uint      `json:"song_id" gorm:"not null"`
-	Position int       `json:"position" gorm:"not null"`
-	AddedAt  time.Time `json:"added_at" gorm:"not null"`
+	ID            uint64     `json:"id" gorm:"primaryKey"`
+	UserID        uuid.UUID  `json:"user_id" gorm:"type:uuid;not null;index"`
+	SongID        uint       `json:"song_id" gorm:"not null"`
+	Position      int        `json:"position" gorm:"not null"`
+	AddedAt       time.Time  `json:"added_at" gorm:"not null"`
+	ReservationID *uuid.UUID `json:"-" gorm:"type:uuid;index"`
+	ReservedUntil *time.Time `json:"-"`
+}
+
+type QueueEntry struct {
+	ID       uint64    `json:"id"`
+	Position int       `json:"position"`
+	AddedAt  time.Time `json:"added_at"`
+	Song     Song      `json:"song"`
+}
+
+type QueueReservation struct {
+	ID        uuid.UUID `json:"id"`
+	EntryID   uint64    `json:"entry_id"`
+	ExpiresAt time.Time `json:"expires_at"`
+	Song      Song      `json:"song"`
 }
 
 // PlayHistory mencatat setiap kali user MULAI memutar sebuah lagu.
