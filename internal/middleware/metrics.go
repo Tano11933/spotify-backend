@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -52,13 +53,15 @@ func (m *HTTPMetrics) Middleware() fiber.Handler {
 
 		err := c.Next()
 
-		route := c.Route().Path
+		// Prometheus retains label strings beyond Fiber's request-buffer lifetime.
+		method := strings.Clone(c.Method())
+		route := strings.Clone(c.Route().Path)
 		if route == "" {
 			route = "unmatched"
 		}
 
-		m.requests.WithLabelValues(c.Method(), route, strconv.Itoa(c.Response().StatusCode())).Inc()
-		m.duration.WithLabelValues(c.Method(), route).Observe(time.Since(start).Seconds())
+		m.requests.WithLabelValues(method, route, strconv.Itoa(c.Response().StatusCode())).Inc()
+		m.duration.WithLabelValues(method, route).Observe(time.Since(start).Seconds())
 
 		return err
 	}
