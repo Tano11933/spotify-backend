@@ -63,6 +63,10 @@ type silentMailer struct{}
 func (silentMailer) Send(context.Context, string, string, string, string) error { return nil }
 
 func TestMain(m *testing.M) {
+	os.Exit(runIntegration(m))
+}
+
+func runIntegration(m *testing.M) int {
 	// Log request middleware tidak perlu memenuhi output test; strukturnya
 	// sendiri sudah diuji di pkg/logging.
 	logging.SetupTo(io.Discard, "text")
@@ -77,14 +81,14 @@ func TestMain(m *testing.M) {
 	)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "gagal menyalakan container Postgres (Docker berjalan?):", err)
-		os.Exit(1)
+		return 1
 	}
 	defer func() { _ = pgContainer.Terminate(ctx) }()
 
 	dsn, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "gagal membaca DSN container:", err)
-		os.Exit(1)
+		return 1
 	}
 
 	db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
@@ -93,28 +97,32 @@ func TestMain(m *testing.M) {
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "gagal konek ke Postgres test:", err)
-		os.Exit(1)
+		return 1
+	}
+	if sqlDB, err := db.DB(); err == nil {
+		defer func() { _ = sqlDB.Close() }()
 	}
 
 	redisContainer, err := tcredis.Run(ctx, "redis:7-alpine")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "gagal menyalakan container Redis:", err)
-		os.Exit(1)
+		return 1
 	}
 	defer func() { _ = redisContainer.Terminate(ctx) }()
 
 	redisAddr, err := redisContainer.Endpoint(ctx, "")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "gagal membaca endpoint Redis:", err)
-		os.Exit(1)
+		return 1
 	}
 	rdb := redis.NewClient(&redis.Options{Addr: redisAddr})
+	defer func() { _ = rdb.Close() }()
 
-	// Direktori upload sementara — dibersihkan otomatis oleh OS.
+	// Cleanup must run before TestMain calls os.Exit.
 	uploadDir, err := os.MkdirTemp("", "spotify-uploads-*")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "gagal membuat direktori upload sementara:", err)
-		os.Exit(1)
+		return 1
 	}
 	defer func() { _ = os.RemoveAll(uploadDir) }()
 
@@ -137,20 +145,21 @@ func TestMain(m *testing.M) {
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "gagal merakit aplikasi:", err)
-		os.Exit(1)
+		return 1
 	}
 
+	defer testApp.Shutdown()
 	if err := testApp.Migrate(); err != nil {
 		fmt.Fprintln(os.Stderr, "gagal menjalankan migrasi:", err)
-		os.Exit(1)
+		return 1
 	}
 
 	if err := seedFixture(); err != nil {
 		fmt.Fprintln(os.Stderr, "gagal menyiapkan fixture:", err)
-		os.Exit(1)
+		return 1
 	}
 
-	os.Exit(m.Run())
+	return m.Run()
 }
 
 // seedFixture mengisi data minimal: dua user (admin & biasa), dua artist,
