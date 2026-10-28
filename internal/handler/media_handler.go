@@ -74,6 +74,8 @@ func (h *MediaHandler) Stream(c *fiber.Ctx) error {
 	}
 
 	c.Set(fiber.HeaderContentType, service.ContentTypeForAudio(source.Song.AudioKey))
+	c.Set(fiber.HeaderCacheControl, "no-store")
+	c.Set("X-Content-Type-Options", "nosniff")
 
 	// Berkas TIDAK ditutup di sini: fasthttp menutup body stream setelah
 	// selesai menulis, dan pembungkus di serveRange menutupnya saat EOF.
@@ -137,6 +139,7 @@ func serveRange(c *fiber.Ctx, file io.ReadSeekCloser, size int64) error {
 	if rangeHeader := c.Get(fiber.HeaderRange); rangeHeader != "" {
 		parsedStart, parsedEnd, err := parseByteRange(rangeHeader, size)
 		if err != nil {
+			_ = file.Close()
 			c.Set(fiber.HeaderContentRange, fmt.Sprintf("bytes */%d", size))
 			return response.Error(c, fiber.StatusRequestedRangeNotSatisfiable, apperr.CodeValidation, "invalid range")
 		}
@@ -220,6 +223,7 @@ func mediaError(c *fiber.Ctx, err error) error {
 		return response.NotFound(c, err.Error())
 
 	case errors.Is(err, service.ErrEmptyAudioFile),
+		errors.Is(err, service.ErrInvalidAudioContent),
 		errors.Is(err, service.ErrUnsupportedAudioType):
 		return response.BadRequest(c, err.Error())
 

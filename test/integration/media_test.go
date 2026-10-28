@@ -4,18 +4,26 @@ package integration
 
 import (
 	"bytes"
+	"context"
+	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
+
+	"spotify-backend/internal/model"
+	"spotify-backend/internal/repository"
+	"spotify-backend/internal/service"
+	"spotify-backend/pkg/storage"
 )
 
-// buildAudioMultipart menyusun body multipart berisi satu berkas audio palsu.
-// Isinya bukan MP3 sungguhan — yang diuji di sini penyimpanan, validasi, dan
-// pelayanan HTTP Range, bukan codec.
+// buildAudioMultipart builds one file part without relying on its MIME header.
 func buildAudioMultipart(t *testing.T, filename string, content []byte) (string, []byte) {
 	t.Helper()
 
@@ -96,8 +104,8 @@ func TestAudioUploadAndStream(t *testing.T) {
 		do(t, "DELETE", fmt.Sprintf("/api/songs/%d", songID), admin, nil)
 	})
 
-	content := bytes.Repeat([]byte("AUDIODATA"), 1000) // 9000 byte
-	contentType, body := buildAudioMultipart(t, "song.mp3", content)
+	content := pcmFixture(9000)
+	contentType, body := buildAudioMultipart(t, "song.wav", content)
 
 	status, _ := doMultipart(t, "POST", fmt.Sprintf("/api/admin/songs/%d/audio", songID), admin, contentType, body)
 	if status != 200 {
@@ -105,6 +113,11 @@ func TestAudioUploadAndStream(t *testing.T) {
 	}
 
 	streamPath := fmt.Sprintf("/api/stream/songs/%d", songID)
+	largeType, largeBody := buildAudioMultipart(t, "large.wav", make([]byte, 20*1024*1024+1))
+	status, _ = doMultipart(t, "POST", fmt.Sprintf("/api/admin/songs/%d/audio", songID), admin, largeType, largeBody)
+	if status != 413 {
+		t.Fatalf("oversized upload = %d, want 413", status)
+	}
 
 	// Tanpa Range: 200 + isi utuh.
 	resp, got := fetchRaw(t, streamPath, nil)
@@ -117,8 +130,8 @@ func TestAudioUploadAndStream(t *testing.T) {
 	if resp.Header.Get("Accept-Ranges") != "bytes" {
 		t.Fatalf("Accept-Ranges = %q", resp.Header.Get("Accept-Ranges"))
 	}
-	if resp.Header.Get("Content-Type") != "audio/mpeg" {
-		t.Fatalf("Content-Type = %q, mau audio/mpeg", resp.Header.Get("Content-Type"))
+	if resp.Header.Get("Content-Type") != "audio/wav" {
+		t.Fatalf("Content-Type = %q, mau audio/wav", resp.Header.Get("Content-Type"))
 	}
 
 	// Range eksplisit: 206 + potongan yang benar.
@@ -154,12 +167,141 @@ func TestAudioUploadAndStream(t *testing.T) {
 	if status != 400 {
 		t.Fatalf("upload .txt = %d, mau 400", status)
 	}
+	for _, invalid := range []struct {
+		name string
+		data []byte
+	}{
+		{"empty.wav", nil}, {"fake.mp3", []byte("not audio")}, {"wrong.mp3", content},
+		{"truncated.wav", content[:50]}, {"video.m4a", content},
+	} {
+		t.Run(invalid.name, func(t *testing.T) {
+			ct, b := buildAudioMultipart(t, invalid.name, invalid.data)
+			status, _ := doMultipart(t, "POST", fmt.Sprintf("/api/admin/songs/%d/audio", songID), admin, ct, b)
+			if status != 400 {
+				t.Fatalf("invalid upload = %d", status)
+			}
+			_, got := fetchRaw(t, streamPath, nil)
+			if !bytes.Equal(got, content) {
+				t.Fatal("failed upload replaced old audio")
+			}
+		})
+	}
+	replacement := pcmFixture(4000)
+	ct, b := buildAudioMultipart(t, "replacement.WAV", replacement)
+	status, _ = doMultipart(t, "POST", fmt.Sprintf("/api/admin/songs/%d/audio", songID), admin, ct, b)
+	if status != 200 {
+		t.Fatalf("replacement = %d", status)
+	}
+	resp, got = fetchRaw(t, streamPath, map[string]string{"Range": "bytes=40-59"})
+	if resp.StatusCode != 206 || !bytes.Equal(got, replacement[40:60]) {
+		t.Fatal("replacement range mismatch")
+	}
+	if resp.Header.Get("Cache-Control") != "no-store" {
+		t.Fatal("replacement may be cached")
+	}
+	status, _ = doMultipart(t, "POST", fmt.Sprintf("/api/admin/songs/%d/audio", songID), "", ct, b)
+	if status != 401 {
+		t.Fatalf("anonymous upload = %d", status)
+	}
 
 	// User biasa tidak boleh mengunggah: 403.
 	user := login(t, "user@test.local", "Password123!")
 	status, _ = doMultipart(t, "POST", fmt.Sprintf("/api/admin/songs/%d/audio", songID), user, contentType, body)
 	if status != 403 {
 		t.Fatalf("upload oleh user biasa = %d, mau 403", status)
+	}
+}
+
+func pcmFixture(samples int) []byte {
+	data := make([]byte, 44+samples*2)
+	copy(data, "RIFF")
+	binary.LittleEndian.PutUint32(data[4:], uint32(len(data)-8))
+	copy(data[8:], "WAVEfmt ")
+	binary.LittleEndian.PutUint32(data[16:], 16)
+	binary.LittleEndian.PutUint16(data[20:], 1)
+	binary.LittleEndian.PutUint16(data[22:], 1)
+	binary.LittleEndian.PutUint32(data[24:], 8000)
+	binary.LittleEndian.PutUint32(data[28:], 16000)
+	binary.LittleEndian.PutUint16(data[32:], 2)
+	binary.LittleEndian.PutUint16(data[34:], 16)
+	copy(data[36:], "data")
+	binary.LittleEndian.PutUint32(data[40:], uint32(samples*2))
+	return data
+}
+
+func TestAudioSizeAndReplacementCleanup(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	store, err := storage.NewLocal(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	song := model.Song{Title: "Size fixture", Duration: 1, ArtistID: fixtureArtistID}
+	if err := db.Create(&song).Error; err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Delete(&song) })
+	svc := service.NewMediaService(repository.NewSongRepository(db), store, 1024)
+	valid := pcmFixture(200)
+	first, err := svc.UploadAudio(ctx, song.ID, "first.wav", int64(len(valid)), bytes.NewReader(valid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldKey := first.AudioKey
+	for _, declared := range []int64{1, 2048} {
+		_, err = svc.UploadAudio(ctx, song.ID, "large.wav", declared, bytes.NewReader(pcmFixture(1000)))
+		if !errors.Is(err, service.ErrAudioTooLarge) {
+			t.Fatalf("size error = %v", err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, oldKey)); err != nil {
+		t.Fatal("old audio lost", err)
+	}
+	files, _ := filepath.Glob(filepath.Join(dir, "songs", "*"))
+	if len(files) != 1 {
+		t.Fatalf("failed uploads left %d files", len(files))
+	}
+	second, err := svc.UploadAudio(ctx, song.ID, "second.wav", int64(len(valid)), bytes.NewReader(valid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.AudioKey == oldKey {
+		t.Fatal("replacement reused storage key")
+	}
+	if _, err := os.Stat(filepath.Join(dir, oldKey)); !os.IsNotExist(err) {
+		t.Fatal("old file not removed", err)
+	}
+	files, _ = filepath.Glob(filepath.Join(dir, "songs", "*"))
+	if len(files) != 1 {
+		t.Fatalf("replacement left %d files", len(files))
+	}
+	results := make(chan error, 2)
+	start := make(chan struct{})
+	for range 2 {
+		go func() {
+			<-start
+			_, err := svc.UploadAudio(ctx, song.ID, "concurrent.wav", int64(len(valid)), bytes.NewReader(valid))
+			results <- err
+		}()
+	}
+	close(start)
+	for range 2 {
+		if err := <-results; err != nil {
+			t.Fatal(err)
+		}
+	}
+	files, _ = filepath.Glob(filepath.Join(dir, "songs", "*"))
+	if len(files) != 1 {
+		t.Fatalf("concurrent replacements left %d files", len(files))
+	}
+	source, err := svc.OpenAudio(ctx, song.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.File.Close()
+	got, err := io.ReadAll(source.File)
+	if err != nil || !bytes.Equal(got, valid) {
+		t.Fatal("concurrent replacement lost audio", err)
 	}
 }
 

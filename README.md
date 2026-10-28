@@ -642,7 +642,7 @@ Detail kontrak, kompatibilitas, dan batasannya ada di
 
 | Method | Endpoint | Akses | Keterangan |
 |---|---|---|---|
-| POST | `/api/admin/songs/:id/audio` | 👑 | Unggah berkas audio (multipart, field `file`). Format: `.mp3` `.wav` `.ogg` `.m4a` `.aac`, maks 20MB |
+| POST | `/api/admin/songs/:id/audio` | 👑 | Unggah/ganti audio (multipart, field `file`). MP3 atau WAV PCM, maks 20 MiB; lihat [kontrak validasi](docs/audio-upload.md) |
 | GET | `/api/stream/songs/:id` | 🌐 | Streaming audio dengan **HTTP Range** (`206`) — wajib agar `<audio>` bisa seek |
 
 - Berkas disimpan lewat abstraksi `pkg/storage` (disk lokal di `UPLOAD_DIR`);

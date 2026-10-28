@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -21,11 +22,10 @@ var (
 	ErrEmptyAudioFile       = errors.New("audio file is empty")
 	ErrAudioTooLarge        = errors.New("audio file is too large")
 	ErrUnsupportedAudioType = errors.New("unsupported audio format")
+	ErrInvalidAudioContent  = errors.New("invalid audio content: use MP3 or PCM WAV (8/16-bit mono/stereo)")
 )
 
-// audioContentTypes adalah daftar format yang diterima — key-nya ekstensi,
-// value-nya content type. Dipakai untuk validasi unggahan sekaligus untuk
-// menentukan header saat streaming.
+// Keep MIME types for legacy uploads even though new uploads accept MP3/WAV only.
 var audioContentTypes = map[string]string{
 	".mp3": "audio/mpeg",
 	".wav": "audio/wav",
@@ -90,19 +90,40 @@ func (s *MediaService) UploadAudio(
 	}
 
 	ext := strings.ToLower(filepath.Ext(filename))
-	if _, ok := audioContentTypes[ext]; !ok {
+	if ext != ".mp3" && ext != ".wav" {
 		return nil, ErrUnsupportedAudioType
+	}
+	limit := s.maxSize
+	if limit <= 0 {
+		limit = 20 * 1024 * 1024
+	}
+	data, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
+		return nil, fmt.Errorf("read audio: %w", err)
+	}
+	if int64(len(data)) > limit {
+		return nil, ErrAudioTooLarge
+	}
+	if len(data) == 0 {
+		return nil, ErrEmptyAudioFile
+	}
+	if !validAudio(data, ext) {
+		return nil, ErrInvalidAudioContent
 	}
 
 	key := fmt.Sprintf("songs/%d-%d%s", songID, time.Now().UnixNano(), ext)
-	if _, err := s.storage.Save(ctx, key, r); err != nil {
+	if _, err := s.storage.Save(ctx, key, bytes.NewReader(data)); err != nil {
+		_ = s.storage.Delete(ctx, key)
 		return nil, fmt.Errorf("save audio: %w", err)
 	}
 
-	previousKey := song.AudioKey
-	if err := s.repo.UpdateAudioKey(ctx, songID, key); err != nil {
+	previousKey, err := s.repo.ReplaceAudioKey(ctx, songID, key)
+	if err != nil {
 		// Database gagal: jangan tinggalkan berkas yang tidak dirujuk siapa pun.
 		_ = s.storage.Delete(ctx, key)
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, ErrSongNotFound
+		}
 		return nil, fmt.Errorf("update song audio key: %w", err)
 	}
 

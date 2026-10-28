@@ -79,12 +79,17 @@ func (r *SongRepository) FindByIDs(ctx context.Context, ids []uint) ([]model.Son
 	return songs, err
 }
 
-// UpdateAudioKey mencatat lokasi berkas audio hasil unggahan di storage.
-func (r *SongRepository) UpdateAudioKey(ctx context.Context, id uint, key string) error {
-	return r.db.WithContext(ctx).
-		Model(&model.Song{}).
-		Where("id = ?", id).
-		Update("audio_key", key).Error
+func (r *SongRepository) ReplaceAudioKey(ctx context.Context, id uint, key string) (string, error) {
+	var previous string
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var song model.Song
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&song, id).Error; err != nil {
+			return translateNotFound(err)
+		}
+		previous = song.AudioKey
+		return tx.Model(&song).Update("audio_key", key).Error
+	})
+	return previous, err
 }
 
 func (r *SongRepository) FindPageByArtistID(ctx context.Context, artistID uint, limit, offset int) ([]model.Song, int64, error) {
