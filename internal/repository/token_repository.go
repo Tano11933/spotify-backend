@@ -51,6 +51,20 @@ func (r *TokenRepository) DeleteRefreshToken(ctx context.Context, userID uuid.UU
 	return r.rdb.Del(ctx, refreshTokenKey(userID)).Err()
 }
 
+var rotateRefreshToken = redis.NewScript(`
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
+redis.call('SET', KEYS[1], ARGV[2], 'PX', ARGV[3])
+return 1
+`)
+
+func (r *TokenRepository) RotateRefreshToken(ctx context.Context, userID uuid.UUID, previous, next string, ttl time.Duration) (bool, error) {
+	if ttl.Milliseconds() <= 0 {
+		return false, fmt.Errorf("refresh TTL must be positive")
+	}
+	result, err := rotateRefreshToken.Run(ctx, r.rdb, []string{refreshTokenKey(userID)}, previous, next, ttl.Milliseconds()).Int()
+	return result == 1, err
+}
+
 func (r *TokenRepository) StoreResetToken(
 	ctx context.Context,
 	token string,

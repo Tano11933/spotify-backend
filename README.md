@@ -338,6 +338,11 @@ email siapa yang punya akun.
 `200` → `TokenPair` baru (bentuk sama seperti `tokens` di login).
 
 **Refresh token dirotasi:** token lama langsung tidak berlaku setelah dipakai.
+Validasi nilai lama dan penyimpanan penerusnya dilakukan atomik melalui Lua
+Redis (compare-and-set), termasuk pemasangan TTL baru. Request bersamaan dengan
+token lama yang sama hanya menghasilkan satu pasangan token sukses; sisanya
+401. Token yang sudah dicabut/kedaluwarsa tidak dibuat hidup kembali oleh
+refresh terlambat. Kontrak request/response tetap sama, tanpa migrasi key Redis.
 Memakainya lagi → `401`. Ini membatasi kerusakan kalau refresh token tercuri —
 hanya satu pihak yang bisa memakainya, dan pihak kedua yang tertolak jadi sinyal
 bahwa token sudah bocor.

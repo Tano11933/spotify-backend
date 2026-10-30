@@ -151,6 +151,16 @@ func (f *fakeTokenStore) DeleteRefreshToken(_ context.Context, userID uuid.UUID)
 	return nil
 }
 
+func (f *fakeTokenStore) RotateRefreshToken(_ context.Context, userID uuid.UUID, previous, next string, _ time.Duration) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.refresh[userID] != previous {
+		return false, nil
+	}
+	f.refresh[userID] = next
+	return true, nil
+}
+
 func (f *fakeTokenStore) StoreResetToken(_ context.Context, token string, userID uuid.UUID, ttl time.Duration) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

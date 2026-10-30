@@ -49,6 +49,7 @@ type UserStore interface {
 type TokenStore interface {
 	StoreRefreshToken(ctx context.Context, userID uuid.UUID, token string, ttl time.Duration) error
 	GetRefreshToken(ctx context.Context, userID uuid.UUID) (string, error)
+	RotateRefreshToken(ctx context.Context, userID uuid.UUID, previous, next string, ttl time.Duration) (bool, error)
 	DeleteRefreshToken(ctx context.Context, userID uuid.UUID) error
 	StoreResetToken(ctx context.Context, token string, userID uuid.UUID, ttl time.Duration) error
 	ConsumeResetToken(ctx context.Context, token string) (uuid.UUID, error)
@@ -165,18 +166,6 @@ func (s *AuthService) Refresh(ctx context.Context, refreshToken string) (*model.
 		return nil, ErrInvalidToken
 	}
 
-	stored, err := s.tokenRepo.GetRefreshToken(ctx, userID)
-	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			return nil, ErrInvalidToken
-		}
-		return nil, fmt.Errorf("get stored refresh token: %w", err)
-	}
-
-	if stored != refreshToken {
-		return nil, ErrInvalidToken
-	}
-
 	user, err := s.userRepo.FindByID(ctx, userID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
@@ -185,7 +174,18 @@ func (s *AuthService) Refresh(ctx context.Context, refreshToken string) (*model.
 		return nil, fmt.Errorf("find user by id: %w", err)
 	}
 
-	return s.issueTokens(ctx, user)
+	tokens, err := s.generateTokens(user)
+	if err != nil {
+		return nil, err
+	}
+	rotated, err := s.tokenRepo.RotateRefreshToken(ctx, userID, refreshToken, tokens.RefreshToken, s.jwt.RefreshTTL())
+	if err != nil {
+		return nil, fmt.Errorf("rotate refresh token: %w", err)
+	}
+	if !rotated {
+		return nil, ErrInvalidToken
+	}
+	return tokens, nil
 }
 
 func (s *AuthService) Logout(ctx context.Context, userID uuid.UUID) error {
@@ -287,6 +287,17 @@ func (s *AuthService) ResetPassword(ctx context.Context, req model.ResetPassword
 }
 
 func (s *AuthService) issueTokens(ctx context.Context, user *model.User) (*model.TokenPair, error) {
+	tokens, err := s.generateTokens(user)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.tokenRepo.StoreRefreshToken(ctx, user.ID, tokens.RefreshToken, s.jwt.RefreshTTL()); err != nil {
+		return nil, fmt.Errorf("store refresh token: %w", err)
+	}
+	return tokens, nil
+}
+
+func (s *AuthService) generateTokens(user *model.User) (*model.TokenPair, error) {
 	accessToken, err := s.jwt.GenerateAccessToken(user.ID, string(user.Role))
 	if err != nil {
 		return nil, fmt.Errorf("generate access token: %w", err)
@@ -295,10 +306,6 @@ func (s *AuthService) issueTokens(ctx context.Context, user *model.User) (*model
 	refreshToken, err := s.jwt.GenerateRefreshToken(user.ID, string(user.Role))
 	if err != nil {
 		return nil, fmt.Errorf("generate refresh token: %w", err)
-	}
-
-	if err := s.tokenRepo.StoreRefreshToken(ctx, user.ID, refreshToken, s.jwt.RefreshTTL()); err != nil {
-		return nil, fmt.Errorf("store refresh token: %w", err)
 	}
 
 	return &model.TokenPair{
