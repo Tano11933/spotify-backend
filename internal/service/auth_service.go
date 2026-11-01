@@ -3,12 +3,16 @@ package service
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"log"
+	"net"
+	"sort"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -32,6 +36,7 @@ var (
 	ErrWeakPassword       = fmt.Errorf("password must be at least %d characters", minPasswordLength)
 	ErrPasswordTooLong    = errors.New("password must not exceed 72 bytes")
 	ErrUserNotFound       = errors.New("user not found")
+	ErrSessionNotFound    = errors.New("login session not found")
 )
 
 type PasswordResetMailer interface {
@@ -47,10 +52,13 @@ type UserStore interface {
 }
 
 type TokenStore interface {
-	StoreRefreshToken(ctx context.Context, userID uuid.UUID, token string, ttl time.Duration) error
-	GetRefreshToken(ctx context.Context, userID uuid.UUID) (string, error)
-	RotateRefreshToken(ctx context.Context, userID uuid.UUID, previous, next string, ttl time.Duration) (bool, error)
-	DeleteRefreshToken(ctx context.Context, userID uuid.UUID) error
+	SessionGeneration(context.Context, uuid.UUID) (string, error)
+	CreateSession(context.Context, uuid.UUID, string, model.StoredLoginSession) (bool, error)
+	GetSession(context.Context, uuid.UUID, uuid.UUID) (*model.StoredLoginSession, error)
+	RotateSession(context.Context, uuid.UUID, uuid.UUID, string, string, string, time.Duration) (bool, error)
+	ListSessions(context.Context, uuid.UUID, uuid.UUID) ([]model.LoginSession, error)
+	RevokeSession(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error
+	RevokeAllSessions(context.Context, uuid.UUID, uuid.UUID) error
 	StoreResetToken(ctx context.Context, token string, userID uuid.UUID, ttl time.Duration) error
 	ConsumeResetToken(ctx context.Context, token string) (uuid.UUID, error)
 }
@@ -129,7 +137,7 @@ func (s *AuthService) Register(ctx context.Context, req model.RegisterRequest) (
 	return user, nil
 }
 
-func (s *AuthService) Login(ctx context.Context, req model.LoginRequest) (*model.AuthResponse, error) {
+func (s *AuthService) Login(ctx context.Context, req model.LoginRequest, devices ...model.LoginDevice) (*model.AuthResponse, error) {
 	email := normalizeEmail(req.Email)
 
 	user, err := s.userRepo.FindByEmail(ctx, email)
@@ -141,17 +149,33 @@ func (s *AuthService) Login(ctx context.Context, req model.LoginRequest) (*model
 		return nil, fmt.Errorf("find user by email: %w", err)
 	}
 
-	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
+	generation, err := s.tokenRepo.SessionGeneration(ctx, user.ID)
+	if err != nil {
+		return nil, fmt.Errorf("get session generation: %w", err)
+	}
+	passwordHash := user.PasswordHash
+	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(req.Password)); err != nil {
 
 		return nil, ErrInvalidCredentials
 	}
 
-	tokens, err := s.issueTokens(ctx, user)
+	latest, err := s.userRepo.FindByID(ctx, user.ID)
+	if err != nil || latest.PasswordHash != passwordHash {
+		if err != nil && !errors.Is(err, repository.ErrNotFound) {
+			return nil, fmt.Errorf("verify login account: %w", err)
+		}
+		return nil, ErrInvalidCredentials
+	}
+	device := model.LoginDevice{}
+	if len(devices) > 0 {
+		device = devices[0]
+	}
+	tokens, err := s.issueSession(ctx, latest, generation, device)
 	if err != nil {
 		return nil, err
 	}
 
-	return &model.AuthResponse{User: user, Tokens: tokens}, nil
+	return &model.AuthResponse{User: latest, Tokens: tokens}, nil
 }
 
 // Refresh menukar refresh token yang valid dengan sepasang token baru.
@@ -165,6 +189,10 @@ func (s *AuthService) Refresh(ctx context.Context, refreshToken string) (*model.
 	if err != nil {
 		return nil, ErrInvalidToken
 	}
+	sessionID, err := uuid.Parse(claims.SessionID)
+	if err != nil || sessionID == uuid.Nil {
+		return nil, ErrInvalidToken
+	}
 
 	user, err := s.userRepo.FindByID(ctx, userID)
 	if err != nil {
@@ -174,11 +202,22 @@ func (s *AuthService) Refresh(ctx context.Context, refreshToken string) (*model.
 		return nil, fmt.Errorf("find user by id: %w", err)
 	}
 
-	tokens, err := s.generateTokens(user)
+	stored, err := s.tokenRepo.GetSession(ctx, userID, sessionID)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, ErrInvalidToken
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get login session: %w", err)
+	}
+	credential := secretDigest(user.PasswordHash)
+	if stored.CredentialHash != credential {
+		return nil, ErrInvalidToken
+	}
+	tokens, err := s.generateTokens(user, sessionID)
 	if err != nil {
 		return nil, err
 	}
-	rotated, err := s.tokenRepo.RotateRefreshToken(ctx, userID, refreshToken, tokens.RefreshToken, s.jwt.RefreshTTL())
+	rotated, err := s.tokenRepo.RotateSession(ctx, userID, sessionID, secretDigest(refreshToken), secretDigest(tokens.RefreshToken), credential, s.jwt.RefreshTTL())
 	if err != nil {
 		return nil, fmt.Errorf("rotate refresh token: %w", err)
 	}
@@ -188,9 +227,12 @@ func (s *AuthService) Refresh(ctx context.Context, refreshToken string) (*model.
 	return tokens, nil
 }
 
-func (s *AuthService) Logout(ctx context.Context, userID uuid.UUID) error {
-	if err := s.tokenRepo.DeleteRefreshToken(ctx, userID); err != nil {
-		return fmt.Errorf("delete refresh token: %w", err)
+func (s *AuthService) Logout(ctx context.Context, userID uuid.UUID, sessionIDs ...uuid.UUID) error {
+	if len(sessionIDs) == 0 || sessionIDs[0] == uuid.Nil {
+		return nil
+	}
+	if err := s.tokenRepo.RevokeSession(ctx, userID, uuid.Nil, sessionIDs[0]); err != nil {
+		return fmt.Errorf("revoke current session: %w", err)
 	}
 	return nil
 }
@@ -278,32 +320,51 @@ func (s *AuthService) ResetPassword(ctx context.Context, req model.ResetPassword
 		return fmt.Errorf("update password: %w", err)
 	}
 
-	if err := s.tokenRepo.DeleteRefreshToken(ctx, userID); err != nil {
-
-		log.Printf("failed to revoke refresh token for user %s after reset: %v", userID, err)
+	if err := s.tokenRepo.RevokeAllSessions(ctx, userID, uuid.Nil); err != nil {
+		return fmt.Errorf("revoke sessions after password reset: %w", err)
 	}
 
 	return nil
 }
 
-func (s *AuthService) issueTokens(ctx context.Context, user *model.User) (*model.TokenPair, error) {
-	tokens, err := s.generateTokens(user)
+func (s *AuthService) issueSession(ctx context.Context, user *model.User, generation string, device model.LoginDevice) (*model.TokenPair, error) {
+	sessionID := uuid.New()
+	tokens, err := s.generateTokens(user, sessionID)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.tokenRepo.StoreRefreshToken(ctx, user.ID, tokens.RefreshToken, s.jwt.RefreshTTL()); err != nil {
-		return nil, fmt.Errorf("store refresh token: %w", err)
+	now := time.Now().UTC()
+	agent := []rune(strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, device.UserAgent))
+	if len(agent) > 256 {
+		agent = agent[:256]
+	}
+	ip := ""
+	if parsed := net.ParseIP(device.IPAddress); parsed != nil {
+		ip = parsed.String()
+	}
+	stored := model.StoredLoginSession{Session: model.LoginSession{ID: sessionID, UserAgent: string(agent), IPAddress: ip, CreatedAt: now, LastUsedAt: now, ExpiresAt: now.Add(s.jwt.RefreshTTL())}, RefreshHash: secretDigest(tokens.RefreshToken), CredentialHash: secretDigest(user.PasswordHash)}
+	created, err := s.tokenRepo.CreateSession(ctx, user.ID, generation, stored)
+	if err != nil {
+		return nil, fmt.Errorf("store login session: %w", err)
+	}
+	if !created {
+		return nil, ErrInvalidCredentials
 	}
 	return tokens, nil
 }
 
-func (s *AuthService) generateTokens(user *model.User) (*model.TokenPair, error) {
-	accessToken, err := s.jwt.GenerateAccessToken(user.ID, string(user.Role))
+func (s *AuthService) generateTokens(user *model.User, sessionID uuid.UUID) (*model.TokenPair, error) {
+	accessToken, err := s.jwt.GenerateAccessToken(user.ID, string(user.Role), sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("generate access token: %w", err)
 	}
 
-	refreshToken, err := s.jwt.GenerateRefreshToken(user.ID, string(user.Role))
+	refreshToken, err := s.jwt.GenerateRefreshToken(user.ID, string(user.Role), sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("generate refresh token: %w", err)
 	}
@@ -314,6 +375,68 @@ func (s *AuthService) generateTokens(user *model.User) (*model.TokenPair, error)
 		TokenType:    "Bearer",
 		ExpiresIn:    int64(s.jwt.AccessTTL().Seconds()),
 	}, nil
+}
+
+func secretDigest(value string) string { return fmt.Sprintf("%x", sha256.Sum256([]byte(value))) }
+
+func (s *AuthService) validateSession(ctx context.Context, userID, currentID uuid.UUID) error {
+	stored, err := s.tokenRepo.GetSession(ctx, userID, currentID)
+	if errors.Is(err, repository.ErrNotFound) {
+		return ErrInvalidToken
+	}
+	if err != nil {
+		return err
+	}
+	user, err := s.userRepo.FindByID(ctx, userID)
+	if errors.Is(err, repository.ErrNotFound) {
+		return ErrInvalidToken
+	}
+	if err != nil {
+		return err
+	}
+	if stored.CredentialHash != secretDigest(user.PasswordHash) {
+		return ErrInvalidToken
+	}
+	return nil
+}
+
+func sessionError(err error) error {
+	if errors.Is(err, repository.ErrSessionInvalid) {
+		return ErrInvalidToken
+	}
+	if errors.Is(err, repository.ErrNotFound) {
+		return ErrSessionNotFound
+	}
+	return err
+}
+
+func (s *AuthService) ListSessions(ctx context.Context, userID, currentID uuid.UUID) ([]model.LoginSession, error) {
+	if err := s.validateSession(ctx, userID, currentID); err != nil {
+		return nil, err
+	}
+	sessions, err := s.tokenRepo.ListSessions(ctx, userID, currentID)
+	if err != nil {
+		return nil, sessionError(err)
+	}
+	sort.Slice(sessions, func(i, j int) bool {
+		if sessions[i].LastUsedAt.Equal(sessions[j].LastUsedAt) {
+			return sessions[i].ID.String() < sessions[j].ID.String()
+		}
+		return sessions[i].LastUsedAt.After(sessions[j].LastUsedAt)
+	})
+	return sessions, nil
+}
+func (s *AuthService) RevokeSession(ctx context.Context, userID, currentID, targetID uuid.UUID) error {
+	if err := s.validateSession(ctx, userID, currentID); err != nil {
+		return err
+	}
+	return sessionError(s.tokenRepo.RevokeSession(ctx, userID, currentID, targetID))
+}
+func (s *AuthService) RevokeAllSessions(ctx context.Context, userID, currentID uuid.UUID) error {
+	if err := s.validateSession(ctx, userID, currentID); err != nil {
+		return err
+	}
+	return sessionError(s.tokenRepo.RevokeAllSessions(ctx, userID, currentID))
 }
 
 func normalizeEmail(email string) string {

@@ -112,53 +112,106 @@ func (f *fakeUserStore) UpdatePassword(_ context.Context, id uuid.UUID, hash str
 }
 
 type fakeTokenStore struct {
-	mu       sync.Mutex
-	refresh  map[uuid.UUID]string
-	resets   map[string]uuid.UUID
-	resetTTL map[string]time.Duration
+	mu          sync.Mutex
+	sessions    map[uuid.UUID]map[uuid.UUID]model.StoredLoginSession
+	generations map[uuid.UUID]string
+	revokeError error
+	resets      map[string]uuid.UUID
+	resetTTL    map[string]time.Duration
 }
 
 func newFakeTokenStore() *fakeTokenStore {
 	return &fakeTokenStore{
-		refresh:  make(map[uuid.UUID]string),
-		resets:   make(map[string]uuid.UUID),
-		resetTTL: make(map[string]time.Duration),
+		sessions:    make(map[uuid.UUID]map[uuid.UUID]model.StoredLoginSession),
+		generations: make(map[uuid.UUID]string),
+		resets:      make(map[string]uuid.UUID),
+		resetTTL:    make(map[string]time.Duration),
 	}
 }
 
-func (f *fakeTokenStore) StoreRefreshToken(_ context.Context, userID uuid.UUID, token string, _ time.Duration) error {
+func (f *fakeTokenStore) SessionGeneration(_ context.Context, id uuid.UUID) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.refresh[userID] = token
-	return nil
+	return f.generations[id], nil
 }
-
-func (f *fakeTokenStore) GetRefreshToken(_ context.Context, userID uuid.UUID) (string, error) {
+func (f *fakeTokenStore) CreateSession(_ context.Context, id uuid.UUID, generation string, stored model.StoredLoginSession) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-
-	token, ok := f.refresh[userID]
-	if !ok {
-		return "", repository.ErrNotFound
-	}
-	return token, nil
-}
-
-func (f *fakeTokenStore) DeleteRefreshToken(_ context.Context, userID uuid.UUID) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	delete(f.refresh, userID)
-	return nil
-}
-
-func (f *fakeTokenStore) RotateRefreshToken(_ context.Context, userID uuid.UUID, previous, next string, _ time.Duration) (bool, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.refresh[userID] != previous {
+	if f.generations[id] != generation {
 		return false, nil
 	}
-	f.refresh[userID] = next
+	if f.sessions[id] == nil {
+		f.sessions[id] = make(map[uuid.UUID]model.StoredLoginSession)
+	}
+	f.sessions[id][stored.Session.ID] = stored
 	return true, nil
+}
+func (f *fakeTokenStore) GetSession(_ context.Context, id, sid uuid.UUID) (*model.StoredLoginSession, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	stored, ok := f.sessions[id][sid]
+	if !ok || !stored.Session.ExpiresAt.After(time.Now()) {
+		return nil, repository.ErrNotFound
+	}
+	return &stored, nil
+}
+func (f *fakeTokenStore) RotateSession(_ context.Context, id, sid uuid.UUID, previous, next, credential string, ttl time.Duration) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	stored, ok := f.sessions[id][sid]
+	if !ok || !stored.Session.ExpiresAt.After(time.Now()) || stored.RefreshHash != previous || stored.CredentialHash != credential {
+		return false, nil
+	}
+	stored.RefreshHash = next
+	stored.Session.LastUsedAt = time.Now()
+	stored.Session.ExpiresAt = time.Now().Add(ttl)
+	f.sessions[id][sid] = stored
+	return true, nil
+}
+func (f *fakeTokenStore) ListSessions(_ context.Context, id, current uuid.UUID) ([]model.LoginSession, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.sessions[id][current]; !ok {
+		return nil, repository.ErrSessionInvalid
+	}
+	result := []model.LoginSession{}
+	for _, stored := range f.sessions[id] {
+		if stored.Session.ExpiresAt.After(time.Now()) {
+			row := stored.Session
+			row.Current = row.ID == current
+			result = append(result, row)
+		}
+	}
+	return result, nil
+}
+func (f *fakeTokenStore) RevokeSession(_ context.Context, id, current, target uuid.UUID) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if current != uuid.Nil {
+		if _, ok := f.sessions[id][current]; !ok {
+			return repository.ErrSessionInvalid
+		}
+		if _, ok := f.sessions[id][target]; !ok {
+			return repository.ErrNotFound
+		}
+	}
+	delete(f.sessions[id], target)
+	return nil
+}
+func (f *fakeTokenStore) RevokeAllSessions(_ context.Context, id, current uuid.UUID) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.revokeError != nil {
+		return f.revokeError
+	}
+	if current != uuid.Nil {
+		if _, ok := f.sessions[id][current]; !ok {
+			return repository.ErrSessionInvalid
+		}
+	}
+	delete(f.sessions, id)
+	f.generations[id] = uuid.NewString()
+	return nil
 }
 
 func (f *fakeTokenStore) StoreResetToken(_ context.Context, token string, userID uuid.UUID, ttl time.Duration) error {
@@ -414,12 +467,13 @@ func TestLoginReturnsTokensAndStoresRefreshToken(t *testing.T) {
 	}
 
 	// Refresh token wajib tercatat, kalau tidak endpoint refresh akan menolaknya.
-	stored, err := f.tokens.GetRefreshToken(context.Background(), user.ID)
+	sid, _ := uuid.Parse(claims.SessionID)
+	stored, err := f.tokens.GetSession(context.Background(), user.ID, sid)
 	if err != nil {
 		t.Fatalf("refresh token tidak tersimpan: %v", err)
 	}
-	if stored != res.Tokens.RefreshToken {
-		t.Error("refresh token tersimpan tidak sama dengan yang dikembalikan")
+	if stored.RefreshHash != secretDigest(res.Tokens.RefreshToken) {
+		t.Error("stored refresh digest does not match token")
 	}
 }
 
@@ -510,7 +564,9 @@ func TestRefreshRejectsSignatureValidTokenThatWasRevoked(t *testing.T) {
 		t.Fatalf("Login: %v", err)
 	}
 
-	if err := f.svc.Logout(context.Background(), user.ID); err != nil {
+	claims, _ := f.jwt.ParseRefreshToken(login.Tokens.RefreshToken)
+	sid, _ := uuid.Parse(claims.SessionID)
+	if err := f.svc.Logout(context.Background(), user.ID, sid); err != nil {
 		t.Fatalf("Logout: %v", err)
 	}
 

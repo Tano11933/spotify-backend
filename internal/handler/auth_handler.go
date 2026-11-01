@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 
 	"spotify-backend/internal/middleware"
 	"spotify-backend/internal/model"
@@ -52,7 +53,7 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 		return response.Validation(c, err)
 	}
 
-	res, err := h.service.Login(c.UserContext(), req)
+	res, err := h.service.Login(c.UserContext(), req, model.LoginDevice{UserAgent: c.Get(fiber.HeaderUserAgent), IPAddress: c.IP()})
 	if err != nil {
 		return authError(c, err)
 	}
@@ -84,7 +85,8 @@ func (h *AuthHandler) Logout(c *fiber.Ctx) error {
 		return response.Unauthorized(c, "unauthorized")
 	}
 
-	if err := h.service.Logout(c.UserContext(), userID); err != nil {
+	sessionID, _ := middleware.SessionIDFromContext(c)
+	if err := h.service.Logout(c.UserContext(), userID, sessionID); err != nil {
 		return authError(c, err)
 	}
 
@@ -155,11 +157,50 @@ func authError(c *fiber.Ctx, err error) error {
 		errors.Is(err, service.ErrPasswordTooLong):
 		return response.BadRequest(c, err.Error())
 
-	case errors.Is(err, service.ErrUserNotFound):
+	case errors.Is(err, service.ErrUserNotFound), errors.Is(err, service.ErrSessionNotFound):
 		return response.NotFound(c, err.Error())
 
 	default:
 		log.Printf("auth handler error on %s %s: %v", c.Method(), c.Path(), err)
 		return response.Internal(c)
 	}
+}
+
+func (h *AuthHandler) Sessions(c *fiber.Ctx) error {
+	userID, _ := middleware.UserIDFromContext(c)
+	currentID, ok := middleware.SessionIDFromContext(c)
+	if !ok {
+		return response.Unauthorized(c, "please log in again to manage sessions")
+	}
+	sessions, err := h.service.ListSessions(c.UserContext(), userID, currentID)
+	if err != nil {
+		return authError(c, err)
+	}
+	return c.JSON(fiber.Map{"items": sessions})
+}
+func (h *AuthHandler) RevokeSession(c *fiber.Ctx) error {
+	userID, _ := middleware.UserIDFromContext(c)
+	currentID, ok := middleware.SessionIDFromContext(c)
+	if !ok {
+		return response.Unauthorized(c, "please log in again to manage sessions")
+	}
+	targetID, err := uuid.Parse(c.Params("sessionId"))
+	if err != nil || targetID == uuid.Nil {
+		return response.BadRequest(c, "invalid session id")
+	}
+	if err := h.service.RevokeSession(c.UserContext(), userID, currentID, targetID); err != nil {
+		return authError(c, err)
+	}
+	return c.JSON(model.MessageResponse{Message: "login session revoked"})
+}
+func (h *AuthHandler) RevokeAllSessions(c *fiber.Ctx) error {
+	userID, _ := middleware.UserIDFromContext(c)
+	currentID, ok := middleware.SessionIDFromContext(c)
+	if !ok {
+		return response.Unauthorized(c, "please log in again to manage sessions")
+	}
+	if err := h.service.RevokeAllSessions(c.UserContext(), userID, currentID); err != nil {
+		return authError(c, err)
+	}
+	return c.JSON(model.MessageResponse{Message: "all login sessions revoked"})
 }

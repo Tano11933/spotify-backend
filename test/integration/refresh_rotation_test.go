@@ -7,28 +7,20 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/google/uuid"
 	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
 
 	"spotify-backend/internal/repository"
-	jwtpkg "spotify-backend/pkg/jwt"
 )
 
 func TestConcurrentRefreshHasOneSuccessor(t *testing.T) {
 	id, _ := queueUser(t)
 	ctx := context.Background()
-	manager := jwtpkg.NewManager("integration-access-secret", "integration-refresh-secret", time.Minute, time.Hour)
-	previous, err := manager.GenerateRefreshToken(id, "user")
-	if err != nil {
-		t.Fatal(err)
-	}
+	_, previous, sid := storedSessionFixture(t, id, time.Hour)
 	repo := repository.NewTokenRepository(testApp.Redis)
-	if err := repo.StoreRefreshToken(ctx, id, previous, time.Hour); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = repo.DeleteRefreshToken(ctx, id) })
 	body, _ := json.Marshal(map[string]string{"refresh_token": previous})
 	type result struct {
 		status int
@@ -79,11 +71,11 @@ func TestConcurrentRefreshHasOneSuccessor(t *testing.T) {
 	if successes != 1 || winner == previous || winner == "" {
 		t.Fatalf("successes=%d, successor missing or reused", successes)
 	}
-	stored, err := repo.GetRefreshToken(ctx, id)
-	if err != nil || stored != winner {
+	stored, err := repo.GetSession(ctx, id, sid)
+	if err != nil || stored.RefreshHash != sessionDigest(winner) {
 		t.Fatal("winner was overwritten", err)
 	}
-	ttl, err := testApp.Redis.PTTL(ctx, fmt.Sprintf("refresh_token:%s", id)).Result()
+	ttl, err := testApp.Redis.PTTL(ctx, fmt.Sprintf("auth:{%s}:sessions", id)).Result()
 	if err != nil || ttl < 59*time.Minute || ttl > time.Hour {
 		t.Fatalf("rotation TTL = %v (%v)", ttl, err)
 	}
@@ -101,37 +93,33 @@ func TestRefreshCASDoesNotResurrectRevokedOrReplaceNewLogin(t *testing.T) {
 	id, _ := queueUser(t)
 	ctx := context.Background()
 	repo := repository.NewTokenRepository(testApp.Redis)
-	t.Cleanup(func() { _ = repo.DeleteRefreshToken(ctx, id) })
-	if err := repo.StoreRefreshToken(ctx, id, "old", time.Hour); err != nil {
+	_, old, oldID := storedSessionFixture(t, id, time.Hour)
+	_, next, nextID := storedSessionFixture(t, id, time.Hour)
+	stored, _ := repo.GetSession(ctx, id, oldID)
+	if err := repo.RevokeSession(ctx, id, uuid.Nil, oldID); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.DeleteRefreshToken(ctx, id); err != nil {
-		t.Fatal(err)
-	}
-	ok, err := repo.RotateRefreshToken(ctx, id, "old", "resurrected", time.Hour)
+	ok, err := repo.RotateSession(ctx, id, oldID, sessionDigest(old), sessionDigest("resurrected"), stored.CredentialHash, time.Hour)
 	if err != nil || ok {
 		t.Fatalf("revoked token rotated: %v %v", ok, err)
 	}
-	if err := repo.StoreRefreshToken(ctx, id, "new-login", time.Hour); err != nil {
-		t.Fatal(err)
-	}
-	ok, err = repo.RotateRefreshToken(ctx, id, "old", "overwrite", time.Hour)
+	ok, err = repo.RotateSession(ctx, id, oldID, sessionDigest(old), sessionDigest("overwrite"), stored.CredentialHash, time.Hour)
 	if err != nil || ok {
 		t.Fatalf("old token replaced new login: %v %v", ok, err)
 	}
-	got, err := repo.GetRefreshToken(ctx, id)
-	if err != nil || got != "new-login" {
+	got, err := repo.GetSession(ctx, id, nextID)
+	if err != nil || got.RefreshHash != sessionDigest(next) {
 		t.Fatalf("new login lost: %v", err)
 	}
-	testApp.Redis.PExpire(ctx, fmt.Sprintf("refresh_token:%s", id), time.Millisecond)
+	testApp.Redis.PExpire(ctx, fmt.Sprintf("auth:{%s}:sessions", id), time.Millisecond)
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
-		if testApp.Redis.Exists(ctx, fmt.Sprintf("refresh_token:%s", id)).Val() == 0 {
+		if testApp.Redis.Exists(ctx, fmt.Sprintf("auth:{%s}:sessions", id)).Val() == 0 {
 			break
 		}
 		time.Sleep(time.Millisecond)
 	}
-	ok, err = repo.RotateRefreshToken(ctx, id, "new-login", "expired", time.Hour)
+	ok, err = repo.RotateSession(ctx, id, nextID, sessionDigest(next), sessionDigest("expired"), got.CredentialHash, time.Hour)
 	if err != nil || ok {
 		t.Fatalf("expired token rotated: %v %v", ok, err)
 	}

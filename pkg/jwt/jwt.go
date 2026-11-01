@@ -23,6 +23,7 @@ const issuer = "spotify-backend"
 var ErrInvalidToken = errors.New("invalid or expired token")
 
 type Claims struct {
+	SessionID string    `json:"sid,omitempty"`
 	Role      string    `json:"role"`
 	TokenType TokenType `json:"typ"`
 
@@ -52,12 +53,12 @@ func NewManager(accessSecret, refreshSecret string, accessTTL, refreshTTL time.D
 func (m *Manager) AccessTTL() time.Duration  { return m.accessTTL }
 func (m *Manager) RefreshTTL() time.Duration { return m.refreshTTL }
 
-func (m *Manager) GenerateAccessToken(userID uuid.UUID, role string) (string, error) {
-	return m.generate(m.accessSecret, m.accessTTL, TokenTypeAccess, userID, role)
+func (m *Manager) GenerateAccessToken(userID uuid.UUID, role string, sessionID ...uuid.UUID) (string, error) {
+	return m.generate(m.accessSecret, m.accessTTL, TokenTypeAccess, userID, role, sessionID...)
 }
 
-func (m *Manager) GenerateRefreshToken(userID uuid.UUID, role string) (string, error) {
-	return m.generate(m.refreshSecret, m.refreshTTL, TokenTypeRefresh, userID, role)
+func (m *Manager) GenerateRefreshToken(userID uuid.UUID, role string, sessionID ...uuid.UUID) (string, error) {
+	return m.generate(m.refreshSecret, m.refreshTTL, TokenTypeRefresh, userID, role, sessionID...)
 }
 
 func (m *Manager) ParseAccessToken(raw string) (*Claims, error) {
@@ -74,6 +75,7 @@ func (m *Manager) generate(
 	typ TokenType,
 	userID uuid.UUID,
 	role string,
+	sessionID ...uuid.UUID,
 ) (string, error) {
 	jti, err := uuid.NewRandom()
 	if err != nil {
@@ -92,6 +94,9 @@ func (m *Manager) generate(
 			NotBefore: jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
 		},
+	}
+	if len(sessionID) > 0 && sessionID[0] != uuid.Nil {
+		claims.SessionID = sessionID[0].String()
 	}
 
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(secret)
@@ -118,6 +123,12 @@ func (m *Manager) parse(secret []byte, want TokenType, raw string) (*Claims, err
 
 	if _, err := claims.UserID(); err != nil {
 		return nil, ErrInvalidToken
+	}
+	if claims.SessionID != "" {
+		id, err := uuid.Parse(claims.SessionID)
+		if err != nil || id == uuid.Nil {
+			return nil, ErrInvalidToken
+		}
 	}
 
 	return claims, nil

@@ -12,8 +12,9 @@ import (
 )
 
 const (
-	ContextUserID   = "userID"
-	ContextUserRole = "userRole"
+	ContextUserID    = "userID"
+	ContextUserRole  = "userRole"
+	ContextSessionID = "sessionID"
 )
 
 type AuthMiddleware struct {
@@ -56,6 +57,9 @@ func (m *AuthMiddleware) Optional() fiber.Handler {
 
 		c.Locals(ContextUserID, userID)
 		c.Locals(ContextUserRole, claims.Role)
+		if id, err := uuid.Parse(claims.SessionID); err == nil && id != uuid.Nil {
+			c.Locals(ContextSessionID, id)
+		}
 
 		return c.Next()
 	}
@@ -85,6 +89,9 @@ func (m *AuthMiddleware) protect(allowQueryToken bool) fiber.Handler {
 
 		c.Locals(ContextUserID, userID)
 		c.Locals(ContextUserRole, claims.Role)
+		if id, err := uuid.Parse(claims.SessionID); err == nil && id != uuid.Nil {
+			c.Locals(ContextSessionID, id)
+		}
 
 		return c.Next()
 	}
@@ -106,6 +113,11 @@ func UserIDFromContext(c *fiber.Ctx) (uuid.UUID, bool) {
 		return uuid.Nil, false
 	}
 	return id, true
+}
+
+func SessionIDFromContext(c *fiber.Ctx) (uuid.UUID, bool) {
+	id, ok := c.Locals(ContextSessionID).(uuid.UUID)
+	return id, ok && id != uuid.Nil
 }
 
 // bearerToken mengambil bagian token dari header "Bearer <token>".

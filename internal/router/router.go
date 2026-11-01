@@ -122,6 +122,9 @@ func registerAuthRoutes(api fiber.Router, h *Handlers, mw *Middlewares) {
 	// Butuh access token yang valid.
 	auth.Post("/logout", mw.Auth.Protected(), h.Auth.Logout)
 	auth.Get("/me", mw.Auth.Protected(), h.Auth.Me)
+	auth.Get("/sessions", mw.Auth.Protected(), h.Auth.Sessions)
+	auth.Delete("/sessions", mw.Auth.Protected(), h.Auth.RevokeAllSessions)
+	auth.Delete("/sessions/:sessionId", mw.Auth.Protected(), h.Auth.RevokeSession)
 }
 
 func registerCatalogRoutes(api fiber.Router, h *Handlers, mw *Middlewares) {
