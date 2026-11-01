@@ -342,10 +342,11 @@ Validasi nilai lama dan penyimpanan penerusnya dilakukan atomik melalui Lua
 Redis (compare-and-set), termasuk pemasangan TTL baru. Request bersamaan dengan
 token lama yang sama hanya menghasilkan satu pasangan token sukses; sisanya
 401. Token yang sudah dicabut/kedaluwarsa tidak dibuat hidup kembali oleh
-refresh terlambat. Kontrak request/response tetap sama, tanpa migrasi key Redis.
-Memakainya lagi → `401`. Ini membatasi kerusakan kalau refresh token tercuri —
-hanya satu pihak yang bisa memakainya, dan pihak kedua yang tertolak jadi sinyal
-bahwa token sudah bocor.
+refresh terlambat. Bentuk request/response tetap sama; penyimpanan sekarang
+berdasarkan ID sesi, dengan transisi token lama dijelaskan pada
+[siklus sesi login](docs/login-sessions.md).
+Memakai token lama lagi menghasilkan `401`, termasuk ketika request bersamaan
+berlomba merotasi token. Penolakan itu sendiri bukan bukti kebocoran token.
 
 `401` juga kalau token sudah dicabut lewat logout (dicek ke Redis, bukan cuma
 signature).
@@ -354,13 +355,15 @@ signature).
 <details>
 <summary><b>POST /api/auth/logout</b> · 🔒</summary>
 
-Tanpa body. Menghapus refresh token user dari Redis.
+Tanpa body. Mencabut refresh session milik token akses yang digunakan, tanpa
+mematikan login perangkat lain. Lihat [siklus sesi login](docs/login-sessions.md).
 
 `200` → `{"message":"logged out successfully"}`
 
-⚠️ **Access token yang sudah beredar tidak bisa dicabut** — ia tetap valid sampai
-`exp`-nya lewat (maks 15 menit). Itu konsekuensi bawaan JWT stateless, dan
-justru alasan access token dibuat berumur pendek.
+Access token pada API biasa belum diperiksa terhadap status sesi setiap
+request, sehingga tetap berlaku sampai exp (default 15 menit, dapat
+dikonfigurasi). Pengelolaan sesi memiliki pemeriksaan tambahan. Batas koneksi
+WebSocket yang sudah terbuka dijelaskan pada dokumen siklus sesi.
 </details>
 
 <details>
@@ -819,14 +822,18 @@ frontend bisa menampilkan konten tanpa login — dan endpoint itulah yang di-cac
 Menambah artist/album/lagu adalah pekerjaan kurasi, bukan sesuatu yang boleh
 dilakukan user yang baru mendaftar.
 
-**Satu sesi aktif per user.** Refresh token disimpan dengan key
-`refresh_token:{user_id}` — satu key per user. Login di device kedua menimpa key
-itu dan mematikan sesi di device pertama. Untuk multi-device, formatnya perlu
-jadi `refresh_token:{user_id}:{jti}`.
+**Sesi login per perangkat.** Setiap login baru memiliki ID sesi sendiri dan
+rotasi refresh atomik yang independen. Daftar dan pencabutan sesi tersedia lewat
+`GET/DELETE /api/auth/sessions` serta `DELETE /api/auth/sessions/:sessionId`.
+Refresh token lama tanpa claim `sid` memerlukan login ulang. Lihat
+[kontrak dan transisi sesi](docs/login-sessions.md).
 
-**Cache fail-open.** Redis mati membuat aplikasi **lambat**, bukan **rusak**:
-error cache di-log lalu diabaikan, request tetap dilayani dari Postgres. Rate
-limiter juga fail-open — Redis mati tidak boleh mematikan endpoint login total.
+Logout mencabut satu sesi; logout semua perangkat dan reset password mencabut
+seluruh refresh session akun. Sesi yang dicabut tidak dapat mengelola sesi lain.
+
+**Cache fail-open.** Error cache katalog di-log lalu diabaikan; request katalog
+tetap dilayani dari Postgres. Rate limiter juga fail-open. Penyimpanan sesi
+berbeda: login, refresh dan pengelolaan sesi membutuhkan Redis yang tersedia.
 
 **Cache v2: singleflight + stale-while-revalidate.** Katalog (artist, album,
 genre) memakai `GetOrLoadJSON`: saat cache kosong hanya **satu** request yang
