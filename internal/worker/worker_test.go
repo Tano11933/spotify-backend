@@ -37,9 +37,24 @@ func recordSpans(t *testing.T) *tracetest.SpanRecorder {
 // tanpa Redis. Antreannya sendiri diuji dengan Redis sungguhan di test
 // integrasi.
 type fakeSource struct {
-	jobs    []*queue.Job
-	retried []retryCall
-	dead    []*queue.Job
+	jobs      []*queue.Job
+	retried   []retryCall
+	dead      []*queue.Job
+	acked     []*queue.Job
+	settleErr error
+	renew     func(context.Context, *queue.Job) error
+}
+
+func (f *fakeSource) Ack(_ context.Context, job *queue.Job) error {
+	f.acked = append(f.acked, job)
+	return f.settleErr
+}
+
+func (f *fakeSource) Renew(ctx context.Context, job *queue.Job) error {
+	if f.renew != nil {
+		return f.renew(ctx, job)
+	}
+	return nil
 }
 
 type retryCall struct {
@@ -59,12 +74,12 @@ func (f *fakeSource) Reserve(context.Context, time.Duration) (*queue.Job, error)
 
 func (f *fakeSource) Retry(_ context.Context, job *queue.Job, cause error) error {
 	f.retried = append(f.retried, retryCall{job: job, cause: cause})
-	return nil
+	return f.settleErr
 }
 
 func (f *fakeSource) DeadLetter(_ context.Context, job *queue.Job, cause error) error {
 	f.dead = append(f.dead, job)
-	return nil
+	return f.settleErr
 }
 
 func TestWorkerRunsRegisteredHandler(t *testing.T) {
@@ -90,6 +105,9 @@ func TestWorkerRunsRegisteredHandler(t *testing.T) {
 	}
 	if len(source.retried) != 0 || len(source.dead) != 0 {
 		t.Fatalf("job sukses tidak boleh di-retry/dead-letter: %+v", source)
+	}
+	if len(source.acked) != 1 {
+		t.Fatal("successful job was not acknowledged")
 	}
 }
 

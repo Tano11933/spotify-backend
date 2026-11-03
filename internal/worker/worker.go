@@ -44,13 +44,13 @@ type Handler func(ctx context.Context, payload json.RawMessage) error
 // interface supaya logika worker bisa diuji tanpa Redis.
 type JobSource interface {
 	Reserve(ctx context.Context, timeout time.Duration) (*queue.Job, error)
+	Ack(ctx context.Context, job *queue.Job) error
+	Renew(ctx context.Context, job *queue.Job) error
 	Retry(ctx context.Context, job *queue.Job, cause error) error
 	DeadLetter(ctx context.Context, job *queue.Job, cause error) error
 }
 
-// reserveTimeout pendek supaya shutdown tidak menunggu lama: BLPOP dibatalkan
-// ctx, dan timeout ini hanya menentukan seberapa sering loop berputar saat
-// antrean kosong.
+// Reserve also checks abandoned leases while the queue is idle.
 const reserveTimeout = 2 * time.Second
 
 type Worker struct {
@@ -74,16 +74,23 @@ func (w *Worker) Run(ctx context.Context) {
 	log.Println("worker: mulai memproses job")
 
 	for {
+		if ctx.Err() != nil {
+			return
+		}
 		if _, err := w.RunOnce(ctx); err != nil {
 			if ctx.Err() != nil {
 				log.Println("worker: berhenti")
 				return
 			}
 
-			log.Printf("worker: reserve gagal: %v", err)
+			log.Printf("worker: job loop gagal: %v", err)
 			// Jeda kecil supaya Redis yang sedang bermasalah tidak dibombardir
 			// percobaan bertubi-tubi.
-			time.Sleep(time.Second)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(time.Second):
+			}
 		}
 	}
 }
@@ -100,14 +107,13 @@ func (w *Worker) RunOnce(ctx context.Context) (bool, error) {
 		return false, err
 	}
 
-	w.process(ctx, job)
-	return true, nil
+	return true, w.process(ctx, job)
 }
 
 // tracerScope adalah nama instrumentasi untuk span job.
 const tracerScope = "spotify-backend/worker"
 
-func (w *Worker) process(ctx context.Context, job *queue.Job) {
+func (w *Worker) process(ctx context.Context, job *queue.Job) error {
 	ctx, span := otel.Tracer(tracerScope).Start(ctx, "job "+job.Type)
 	defer span.End()
 
@@ -124,21 +130,68 @@ func (w *Worker) process(ctx context.Context, job *queue.Job) {
 		log.Printf("worker: %v (job=%s), dipindah ke dead-letter", cause, job.ID)
 
 		if err := w.source.DeadLetter(ctx, job, cause); err != nil {
-			log.Printf("worker: gagal memindahkan job %s ke dead-letter: %v", job.ID, err)
+			return err
 		}
-		return
+		return nil
 	}
 
-	if err := handler(ctx, job.Payload); err != nil {
+	handlerCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stopHeartbeat := make(chan struct{})
+	heartbeatResult := make(chan error, 1)
+	go func() { heartbeatResult <- w.renewLease(handlerCtx, cancel, job, stopHeartbeat) }()
+	handlerErr := handler(handlerCtx, job.Payload)
+	close(stopHeartbeat)
+	if err := <-heartbeatResult; err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := handlerErr; err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		log.Printf("worker: job %s (%s) gagal: %v", job.ID, job.Type, err)
 
 		if err := w.source.Retry(ctx, job, err); err != nil {
-			log.Printf("worker: gagal menjadwalkan retry job %s: %v", job.ID, err)
+			return err
 		}
-		return
+		return nil
 	}
 
+	if err := w.source.Ack(ctx, job); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return err
+	}
 	log.Printf("worker: job %s (%s) selesai", job.ID, job.Type)
+	return nil
+}
+
+func (w *Worker) renewLease(ctx context.Context, cancel context.CancelFunc, job *queue.Job, stop <-chan struct{}) error {
+	lease := job.LeaseDuration
+	if lease <= 0 {
+		lease = queue.DefaultLease
+	}
+	interval := lease / 3
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			requestCtx, stopRequest := context.WithTimeout(ctx, interval)
+			err := w.source.Renew(requestCtx, job)
+			stopRequest()
+			if err != nil {
+				cancel()
+				return fmt.Errorf("renew job %s: %w", job.ID, err)
+			}
+		}
+	}
 }

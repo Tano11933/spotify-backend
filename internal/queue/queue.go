@@ -1,13 +1,5 @@
-// Package queue menyediakan antrean job berbasis Redis untuk pekerjaan yang
-// tidak boleh membebani request: kirim ulang email, refresh chart terjadwal,
-// dan pekerjaan latar lain.
-//
-// Bentuknya sengaja sederhana: list Redis untuk job siap proses, sorted set
-// untuk job yang sedang menunggu backoff, dan list terpisah untuk dead-letter.
-// Semantiknya AT-MOST-ONCE: job yang sedang diproses saat worker mati tidak
-// dikembalikan otomatis. Untuk kebutuhan proyek ini retry difokuskan pada
-// kegagalan handler (SMTP mati, database sibuk), bukan crash recovery. Kalau
-// nanti butuh at-least-once, tambahkan processing list + reaper.
+// Package queue stores ready, reserved, delayed, and dead-letter jobs in Redis.
+// Delivery is at-least-once while Redis retains the queue data.
 package queue
 
 import (
@@ -22,173 +14,173 @@ import (
 )
 
 const (
-	// MaxAttempts adalah jumlah percobaan maksimum sebelum job masuk
-	// dead-letter. Percobaan pertama tidak dihitung sebagai retry.
-	MaxAttempts = 5
-
-	// BaseRetryDelay dikalikan dua setiap percobaan: 2s, 4s, 8s, 16s.
+	MaxAttempts    = 5
 	BaseRetryDelay = 2 * time.Second
-
-	// MaxRetryDelay membatasi backoff supaya job tidak tertunda berjam-jam.
-	MaxRetryDelay = time.Minute
+	MaxRetryDelay  = time.Minute
+	DefaultLease   = time.Minute
+	pollInterval   = 50 * time.Millisecond
 )
 
-// ErrEmpty dikembalikan Reserve kalau tidak ada job dalam batas waktu tunggu.
-var ErrEmpty = errors.New("queue is empty")
+var (
+	ErrEmpty           = errors.New("queue is empty")
+	ErrReservationLost = errors.New("queue reservation expired or no longer owned")
+	ErrInvalidJob      = errors.New("queue job is invalid; moved to dead-letter")
+)
 
-// Job adalah satu unit pekerjaan. Payload disimpan sebagai JSON mentah supaya
-// queue tidak perlu tahu tipe payload masing-masing handler.
 type Job struct {
-	ID         string          `json:"id"`
-	Type       string          `json:"type"`
-	Payload    json.RawMessage `json:"payload"`
-	Attempt    int             `json:"attempt"`
-	EnqueuedAt time.Time       `json:"enqueued_at"`
-	LastError  string          `json:"last_error,omitempty"`
+	ID      string          `json:"id"`
+	Type    string          `json:"type"`
+	Payload json.RawMessage `json:"payload"`
+	// Attempt counts deliveries, including reservations abandoned by a crash.
+	Attempt       int           `json:"attempt"`
+	EnqueuedAt    time.Time     `json:"enqueued_at"`
+	LastError     string        `json:"last_error,omitempty"`
+	ReservationID string        `json:"-"`
+	LeaseDuration time.Duration `json:"-"`
 }
 
 type Queue struct {
-	rdb  *redis.Client
-	name string
+	rdb   *redis.Client
+	name  string
+	lease time.Duration
 }
 
 func New(rdb *redis.Client, name string) *Queue {
+	return NewWithLease(rdb, name, DefaultLease)
+}
+
+// NewWithLease permits shorter leases for tests and bounded job runtimes.
+// Workers must renew their lease while a handler is still running.
+func NewWithLease(rdb *redis.Client, name string, lease time.Duration) *Queue {
 	if name == "" {
 		name = "jobs"
 	}
-	return &Queue{rdb: rdb, name: name}
+	if lease < 3*time.Millisecond {
+		lease = DefaultLease
+	}
+	return &Queue{rdb: rdb, name: name, lease: lease}
 }
 
-func (q *Queue) readyKey() string   { return "queue:" + q.name }
-func (q *Queue) delayedKey() string { return "queue:" + q.name + ":delayed" }
-func (q *Queue) deadKey() string    { return "queue:" + q.name + ":dead" }
+func (q *Queue) readyKey() string      { return "queue:" + q.name }
+func (q *Queue) delayedKey() string    { return q.readyKey() + ":delayed" }
+func (q *Queue) deadKey() string       { return q.readyKey() + ":dead" }
+func (q *Queue) processingKey() string { return q.readyKey() + ":processing" }
+func (q *Queue) leasesKey() string     { return q.readyKey() + ":leases" }
+func (q *Queue) keys() []string {
+	return []string{q.readyKey(), q.processingKey(), q.leasesKey(), q.delayedKey(), q.deadKey()}
+}
 
-// Enqueue menambahkan job baru ke ujung antrean.
 func (q *Queue) Enqueue(ctx context.Context, jobType string, payload any) error {
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("queue: marshal payload %s: %w", jobType, err)
 	}
-
-	job := Job{
-		ID:         uuid.NewString(),
-		Type:       jobType,
-		Payload:    raw,
-		EnqueuedAt: time.Now().UTC(),
-	}
-	return q.push(ctx, job)
-}
-
-func (q *Queue) push(ctx context.Context, job Job) error {
-	raw, err := json.Marshal(job)
+	job := Job{ID: uuid.NewString(), Type: jobType, Payload: raw, EnqueuedAt: time.Now().UTC()}
+	raw, err = json.Marshal(job)
 	if err != nil {
-		return fmt.Errorf("queue: marshal job %s: %w", job.Type, err)
+		return err
 	}
 	return q.rdb.RPush(ctx, q.readyKey(), raw).Err()
 }
 
-// Reserve mengambil satu job siap proses. Job yang retry-nya belum jatuh tempo
-// dipindahkan dulu dari sorted set ke list siap.
-//
-// BLPOP memblokir sampai ada job atau timeout habis; timeout pendek dipakai
-// worker supaya ctx pembatalan (shutdown) tetap responsif.
+// Reserve polls so the ready -> processing transfer and lease assignment can
+// share one Redis script. A blocking pop followed by HSET would lose crashed jobs.
+// A nonpositive timeout waits until a job arrives or ctx is canceled.
 func (q *Queue) Reserve(ctx context.Context, timeout time.Duration) (*Job, error) {
-	if err := q.promoteDue(ctx); err != nil {
-		return nil, err
+	var deadline time.Time
+	if timeout > 0 {
+		deadline = time.Now().Add(timeout)
 	}
-
-	result, err := q.rdb.BLPop(ctx, timeout, q.readyKey()).Result()
-	if errors.Is(err, redis.Nil) {
-		return nil, ErrEmpty
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if _, err := q.RecoverExpired(ctx); err != nil {
+			return nil, err
+		}
+		if err := promoteScript.Run(ctx, q.rdb, q.keys()).Err(); err != nil {
+			return nil, err
+		}
+		reservationID := uuid.NewString()
+		raw, err := reserveScript.Run(ctx, q.rdb, q.keys(), reservationID, q.lease.Milliseconds()).Text()
+		if err == nil {
+			if raw == "invalid" {
+				return nil, ErrInvalidJob
+			}
+			var delivery struct {
+				RawJob    string `json:"raw_job"`
+				Attempt   int    `json:"attempt"`
+				LastError string `json:"last_error"`
+			}
+			if err := json.Unmarshal([]byte(raw), &delivery); err != nil {
+				return nil, err
+			}
+			var job Job
+			if err := json.Unmarshal([]byte(delivery.RawJob), &job); err != nil {
+				return nil, fmt.Errorf("queue: decode reserved job: %w", err)
+			}
+			job.Attempt = delivery.Attempt
+			job.LastError = delivery.LastError
+			job.ReservationID = reservationID
+			job.LeaseDuration = q.lease
+			return &job, nil
+		}
+		if !errors.Is(err, redis.Nil) {
+			return nil, err
+		}
+		wait := pollInterval
+		if !deadline.IsZero() {
+			remaining := time.Until(deadline)
+			if remaining <= 0 {
+				return nil, ErrEmpty
+			}
+			if remaining < wait {
+				wait = remaining
+			}
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
 	}
-	if err != nil {
-		return nil, err
-	}
-
-	// Hasil BLPOP berbentuk [key, value].
-	var job Job
-	if err := json.Unmarshal([]byte(result[1]), &job); err != nil {
-		return nil, fmt.Errorf("queue: job tidak bisa diurai: %w", err)
-	}
-	return &job, nil
 }
 
-// promoteDue memindahkan job yang waktu retry-nya sudah lewat ke list siap.
-// ZREM dilakukan lebih dulu supaya dua worker tidak memproses job yang sama.
-func (q *Queue) promoteDue(ctx context.Context) error {
-	now := time.Now().UTC().UnixMilli()
+// Ack removes only the currently owned, unexpired reservation.
+func (q *Queue) Ack(ctx context.Context, job *Job) error {
+	return q.finish(ctx, job, "ack", "")
+}
 
-	raws, err := q.rdb.ZRangeByScore(ctx, q.delayedKey(), &redis.ZRangeBy{
-		Min:   "-inf",
-		Max:   fmt.Sprintf("%d", now),
-		Count: 10,
-	}).Result()
+func (q *Queue) Renew(ctx context.Context, job *Job) error {
+	return q.finish(ctx, job, "renew", "")
+}
+
+// Retry and DeadLetter read the stored job instead of trusting a mutated copy.
+func (q *Queue) Retry(ctx context.Context, job *Job, cause error) error {
+	return q.finish(ctx, job, "retry", cause.Error())
+}
+
+func (q *Queue) DeadLetter(ctx context.Context, job *Job, cause error) error {
+	return q.finish(ctx, job, "dead", cause.Error())
+}
+
+func (q *Queue) finish(ctx context.Context, job *Job, action, message string) error {
+	if job == nil || job.ReservationID == "" {
+		return ErrReservationLost
+	}
+	n, err := finishScript.Run(ctx, q.rdb, q.keys(), job.ReservationID, action, message,
+		q.lease.Milliseconds(), MaxAttempts, BaseRetryDelay.Milliseconds(), MaxRetryDelay.Milliseconds()).Int()
 	if err != nil {
 		return err
 	}
-
-	for _, raw := range raws {
-		removed, err := q.rdb.ZRem(ctx, q.delayedKey(), raw).Result()
-		if err != nil {
-			return err
-		}
-		if removed == 0 {
-			continue // worker lain sudah mengambilnya
-		}
-		if err := q.rdb.RPush(ctx, q.readyKey(), raw).Err(); err != nil {
-			return err
-		}
+	if n == 0 {
+		return ErrReservationLost
 	}
 	return nil
 }
 
-// Retry menaikkan Attempt lalu menjadwalkan ulang job dengan backoff
-// eksponensial. Kalau percobaannya sudah habis, job dipindahkan ke dead-letter
-// supaya bisa diperiksa manual alih-alih berputar selamanya.
-func (q *Queue) Retry(ctx context.Context, job *Job, cause error) error {
-	job.Attempt++
-	job.LastError = cause.Error()
-
-	if job.Attempt >= MaxAttempts {
-		return q.DeadLetter(ctx, job, cause)
-	}
-
-	raw, err := json.Marshal(job)
-	if err != nil {
-		return fmt.Errorf("queue: marshal retry %s: %w", job.Type, err)
-	}
-
-	readyAt := time.Now().UTC().Add(retryDelay(job.Attempt)).UnixMilli()
-	return q.rdb.ZAdd(ctx, q.delayedKey(), redis.Z{
-		Score:  float64(readyAt),
-		Member: raw,
-	}).Err()
-}
-
-// DeadLetter menyimpan job yang menyerah ke list terpisah. Isinya sengaja
-// tidak pernah dibaca otomatis; pemeriksaannya manual (mis. lewat redis-cli)
-// atau lewat tooling yang menyusul.
-func (q *Queue) DeadLetter(ctx context.Context, job *Job, cause error) error {
-	job.LastError = cause.Error()
-
-	raw, err := json.Marshal(job)
-	if err != nil {
-		return fmt.Errorf("queue: marshal dead-letter %s: %w", job.Type, err)
-	}
-	return q.rdb.RPush(ctx, q.deadKey(), raw).Err()
-}
-
-// DeadLen mengembalikan jumlah job di dead-letter. Dipakai test dan nanti
-// metrik operasional.
 func (q *Queue) DeadLen(ctx context.Context) (int64, error) {
 	return q.rdb.LLen(ctx, q.deadKey()).Result()
-}
-
-// retryDelay menghitung backoff: 2s, 4s, 8s, 16s, dibatasi MaxRetryDelay.
-func retryDelay(attempt int) time.Duration {
-	delay := BaseRetryDelay << (attempt - 1)
-	if delay > MaxRetryDelay {
-		return MaxRetryDelay
-	}
-	return delay
 }

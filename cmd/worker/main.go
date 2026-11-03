@@ -81,8 +81,8 @@ func main() {
 		return chartRepo.Refresh(ctx)
 	})
 
-	// NotifyContext mengubah sinyal OS menjadi pembatalan ctx; worker
-	// menyelesaikan job yang sedang berjalan lalu berhenti dengan rapi.
+	// Shutdown cancels the handler. An unsettled reservation is recovered
+	// after its lease expires; no job is acknowledged with a canceled context.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
