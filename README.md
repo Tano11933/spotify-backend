@@ -772,16 +772,21 @@ go run ./cmd/worker
 | `email:send` | Kirim ulang email yang gagal (mis. SMTP sempat down). Isi email dirender API dan ikut di payload, jadi worker tidak menyusun ulang templat. |
 | `chart:refresh` | Hitung ulang materialized view chart, dijadwalkan setiap `CHART_REFRESH_INTERVAL` (default 5 menit). |
 
-- Antreannya Redis: list untuk job siap, sorted set untuk backoff
-  (2s, 4s, 8s, 16s), dan list `:dead` untuk job yang menyerah setelah 5
-  percobaan.
+- Antreannya Redis: list untuk job siap, hash reservation + sorted set lease
+  untuk job yang sedang diproses, sorted set untuk backoff (2s, 4s, 8s, 16s),
+  dan list `:dead` setelah maksimal 5 delivery. Worker memperpanjang lease
+  1 menit setiap 20 detik dan ACK hanya setelah handler berhasil.
 - Percobaan pertama email tetap **sinkron**; antrean hanya jalur retry, jadi
   SMTP yang sehat tidak berubah perilakunya.
 - Worker tidak wajib jalan: tanpa worker, API tetap melayani request dan chart
   kembali memakai refresh lazy saat endpoint-nya dibaca.
-- Semantiknya **at-most-once**: job yang sedang diproses saat worker mati tidak
-  dikembalikan otomatis. Untuk kebutuhan sekarang retry difokuskan pada
-  kegagalan handler, bukan crash recovery.
+- Semantiknya **at-least-once** selama data Redis tersedia. Worker berikutnya
+  memulihkan reservation kedaluwarsa dengan backoff; ACK dari worker lama
+  ditolak. Crash ikut menghabiskan batas delivery, sehingga poison job tetap
+  berakhir di dead-letter. Refresh chart menghitung ulang view dan aman diulang;
+  pengiriman SMTP bisa terduplikasi jika email sudah terkirim sebelum ACK.
+- Lihat [job recovery](docs/job-recovery.md) untuk batas jaminan, migrasi worker
+  lama, pemeriksaan antrean, dan replay dead-letter secara atomik.
 
 ### Observability
 
