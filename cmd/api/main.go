@@ -69,6 +69,7 @@ func main() {
 
 		CacheTTL:      app.EnvDuration("CACHE_TTL", 5*time.Minute),
 		ResetTokenTTL: app.EnvDuration("RESET_TOKEN_TTL", 15*time.Minute),
+		QueueName:     os.Getenv("WORKER_QUEUE"),
 
 		FrontendURL: os.Getenv("FRONTEND_URL"),
 		CORSOrigins: origins,

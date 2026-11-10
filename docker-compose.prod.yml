@@ -28,7 +28,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-spotify} -d ${DB_NAME:-spotify_db}"]
+      test: ["CMD-SHELL", 'pg_isready -h 127.0.0.1 -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
       interval: 5s
       timeout: 5s
       retries: 10
@@ -60,6 +60,11 @@ services:
       # Wajib: compose berhenti dengan pesan jelas kalau nilainya kosong.
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET wajib diisi, lihat .env.example}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?JWT_REFRESH_SECRET wajib diisi, lihat .env.example}
+      JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-15m}
+      JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-168h}
+      RESET_TOKEN_TTL: ${RESET_TOKEN_TTL:-15m}
+      CACHE_TTL: ${CACHE_TTL:-5m}
+      WORKER_QUEUE: ${WORKER_QUEUE:-jobs}
 
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
@@ -84,6 +89,12 @@ services:
       - "${APP_PORT:-9000}:9000"
     volumes:
       - uploads_data:/app/uploads
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9000/ready"]
+      interval: 5s
+      timeout: 3s
+      start_period: 10s
+      retries: 10
     depends_on:
       postgres:
         condition: service_healthy
@@ -97,7 +108,9 @@ services:
   worker:
     build: .
     command: ["./worker"]
-    environment: *app_env
+    environment:
+      <<: *app_env
+      CHART_REFRESH_INTERVAL: ${CHART_REFRESH_INTERVAL:-5m}
     # Worker tidak membuka port HTTP, jadi healthcheck bawaan image (yang
     # memanggil /health) tidak berlaku untuknya.
     healthcheck:
