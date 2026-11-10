@@ -1,6 +1,27 @@
 # ARCHITECTURE.md — Spotify Clone
 
-Dokumen ini menjelaskan struktur folder dan pola kode yang harus diikuti saat menambah fitur baru (Auth, WebSocket, SMTP, Caching) agar konsisten dengan kode yang sudah ada.
+Ringkasan berikut menggambarkan implementasi aktif. Bagian bernomor setelahnya menyimpan rancangan awal dan konteks pengembangan.
+
+## Implementasi aktif
+
+```mermaid
+flowchart LR
+    Browser["Browser React dan player audio"] -->|"REST dan WebSocket"| API["Go API dengan Fiber"]
+    API -->|"GORM dan migrasi SQL"| PG["PostgreSQL"]
+    API -->|"Cache, sesi, dan job"| Redis["Redis"]
+    API -->|"Audio lokal dan HTTP Range"| Audio["Volume uploads_data"]
+    Redis -->|"Reservation, lease, ACK"| Worker["Go worker"]
+    Worker -->|"Refresh chart"| PG
+    Worker -->|"Retry email"| Mail["SMTP atau LogMailer"]
+```
+
+`cmd/api` merangkai aplikasi lewat `internal/app`, menjalankan migrasi, lalu membuka HTTP. Handler meneruskan operasi ke service dan repository. `/ready` memeriksa PostgreSQL dan Redis. `cmd/worker` mengambil job Redis dengan lease dan memulihkan reservation yang kedaluwarsa. Antrean lagu milik akun terpisah dari antrean job dan disimpan di PostgreSQL.
+
+Browser memakai `VITE_API_BASE_URL` untuk REST dan `VITE_WS_URL` untuk WebSocket. Keduanya dipasang saat build. Backend mengizinkan origin frontend melalui CORS. Player meminta `/api/stream/songs/:id` dan memakai HTTP Range untuk seek. File unggahan tinggal di volume audio lokal. Deploy dengan beberapa replika API memerlukan storage audio bersama.
+
+Access token tinggal di memori frontend. Refresh token disimpan di browser dan dirotasi per sesi. Cabut sesi memutus refresh sesi itu. Access token tetap berlaku sampai kedaluwarsa, sesuai [kontrak sesi](docs/login-sessions.md). Job worker dapat diproses ulang setelah crash. SMTP bisa mengirim ulang jika pengiriman berhasil sebelum ACK, sebagaimana dijelaskan di [pemulihan job](docs/job-recovery.md).
+
+Gunakan [panduan Docker](DOCKER.md) untuk demo dari checkout bersih dan [panduan backup](docs/backup-restore.md) untuk memulihkan database beserta audio. Suite Playwright di repo frontend menjalankan backend fixture dari `test/e2e` dengan PostgreSQL dan Redis sementara.
 
 ---
 
