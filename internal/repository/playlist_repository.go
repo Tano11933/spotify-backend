@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -34,6 +35,28 @@ func (r *PlaylistRepository) FindByID(ctx context.Context, id uint) (*model.Play
 		return nil, translateNotFound(err)
 	}
 	return &playlist, nil
+}
+
+func (r *PlaylistRepository) FindSongPage(ctx context.Context, playlistID uint, viewerID uuid.UUID, limit, offset int) ([]model.Song, int64, error) {
+	var songs []model.Song
+	var total int64
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var playlist model.Playlist
+		if err := tx.Select("id").
+			Where("user_id = ? OR is_public = ?", viewerID, true).
+			First(&playlist, playlistID).Error; err != nil {
+			return translateNotFound(err)
+		}
+
+		membership := tx.Table(playlistSongsTable).Where("playlist_id = ?", playlist.ID)
+		if err := membership.Session(&gorm.Session{}).Count(&total).Error; err != nil {
+			return err
+		}
+		return tx.Preload("Artist").Preload("Album").
+			Where("id IN (?)", membership.Select("song_id")).
+			Order("id ASC").Limit(limit).Offset(offset).Find(&songs).Error
+	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	return songs, total, err
 }
 
 func (r *PlaylistRepository) FindPageByUserID(ctx context.Context, userID uuid.UUID, limit, offset int) ([]model.Playlist, int64, error) {

@@ -510,8 +510,16 @@ anonim juga.
 | POST | `/api/playlists` | 🔒 |
 | PUT | `/api/playlists/:id` | 🔒 pemilik |
 | DELETE | `/api/playlists/:id` | 🔒 pemilik |
+| GET | `/api/playlists/:id/songs` | 🔒 pemilik, atau kalau publik |
 | POST | `/api/playlists/:id/songs` | 🔒 pemilik |
 | DELETE | `/api/playlists/:id/songs/:songId` | 🔒 pemilik |
+
+`GET /api/playlists/:id/songs?limit=24&offset=0` mengembalikan
+`{ "items": [...], "total": ..., "limit": 24, "offset": 0 }`.
+Lagu diurutkan berdasarkan ID naik. Gunakan offset berikutnya sebesar jumlah
+item yang sudah diterima. Setelah menambah atau menghapus lagu, muat ulang
+rentang dari offset 0 karena perubahan isi dapat menggeser halaman. Endpoint
+detail lama tetap menyertakan lagu untuk kompatibilitas dengan klien yang ada.
 
 ```json
 // POST — user_id diambil dari token, TIDAK dari body

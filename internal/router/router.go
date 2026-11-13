@@ -234,6 +234,7 @@ func registerPlaylistRoutes(api fiber.Router, h *Handlers, mw *Middlewares) {
 	playlists.Put("/:id", h.Playlist.Update)
 	playlists.Delete("/:id", h.Playlist.Delete)
 
+	playlists.Get("/:id/songs", h.Playlist.GetSongs)
 	playlists.Post("/:id/songs", h.Playlist.AddSong)
 	playlists.Delete("/:id/songs/:songId", h.Playlist.RemoveSong)
 }

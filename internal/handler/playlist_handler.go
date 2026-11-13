@@ -96,6 +96,26 @@ func (h *PlaylistHandler) GetByID(c *fiber.Ctx) error {
 	return c.JSON(playlist)
 }
 
+func (h *PlaylistHandler) GetSongs(c *fiber.Ctx) error {
+	userID, ok := middleware.UserIDFromContext(c)
+	if !ok {
+		return response.Unauthorized(c, "unauthorized")
+	}
+	id, err := parseUintParam(c, "id")
+	if err != nil {
+		return response.BadRequest(c, "invalid id")
+	}
+	params, err := pagination.Parse(c.Query("limit"), c.Query("offset"))
+	if err != nil {
+		return response.BadRequest(c, err.Error())
+	}
+	page, err := h.service.GetSongs(c.UserContext(), id, userID, params)
+	if err != nil {
+		return playlistError(c, err)
+	}
+	return c.JSON(page)
+}
+
 func (h *PlaylistHandler) Update(c *fiber.Ctx) error {
 	userID, ok := middleware.UserIDFromContext(c)
 	if !ok {

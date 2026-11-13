@@ -94,6 +94,17 @@ func (s *PlaylistService) GetByID(
 	return playlist, nil
 }
 
+func (s *PlaylistService) GetSongs(ctx context.Context, playlistID uint, viewerID uuid.UUID, params pagination.Params) (pagination.Page[model.Song], error) {
+	songs, total, err := s.repo.FindSongPage(ctx, playlistID, viewerID, params.Limit, params.Offset)
+	if errors.Is(err, repository.ErrNotFound) {
+		return pagination.Page[model.Song]{}, ErrPlaylistNotFound
+	}
+	if err != nil {
+		return pagination.Page[model.Song]{}, fmt.Errorf("list playlist songs: %w", err)
+	}
+	return pagination.NewPage(songs, total, params), nil
+}
+
 func (s *PlaylistService) Update(
 	ctx context.Context,
 	playlistID uint,
