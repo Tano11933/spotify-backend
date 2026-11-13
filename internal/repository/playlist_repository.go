@@ -59,7 +59,7 @@ func (r *PlaylistRepository) FindSongPage(ctx context.Context, playlistID uint, 
 	return songs, total, err
 }
 
-func (r *PlaylistRepository) FindPageByUserID(ctx context.Context, userID uuid.UUID, limit, offset int) ([]model.Playlist, int64, error) {
+func (r *PlaylistRepository) FindPageByUserID(ctx context.Context, userID uuid.UUID, limit, offset int, includeSongs bool) ([]model.Playlist, int64, error) {
 	var playlists []model.Playlist
 	var total int64
 
@@ -70,18 +70,15 @@ func (r *PlaylistRepository) FindPageByUserID(ctx context.Context, userID uuid.U
 		return nil, 0, err
 	}
 
-	err := r.db.WithContext(ctx).
-		Preload("Songs.Artist").
-		Preload("Songs.Album").
-		Where("user_id = ?", userID).
-		Order("created_at DESC").
-		Limit(limit).
-		Offset(offset).
-		Find(&playlists).Error
+	query := r.db.WithContext(ctx).Where("user_id = ?", userID)
+	if includeSongs {
+		query = query.Preload("Songs.Artist").Preload("Songs.Album")
+	}
+	err := query.Order("created_at DESC").Limit(limit).Offset(offset).Find(&playlists).Error
 	return playlists, total, err
 }
 
-func (r *PlaylistRepository) FindPagePublic(ctx context.Context, limit, offset int) ([]model.Playlist, int64, error) {
+func (r *PlaylistRepository) FindPagePublic(ctx context.Context, limit, offset int, includeSongs bool) ([]model.Playlist, int64, error) {
 	var playlists []model.Playlist
 	var total int64
 
@@ -92,15 +89,11 @@ func (r *PlaylistRepository) FindPagePublic(ctx context.Context, limit, offset i
 		return nil, 0, err
 	}
 
-	err := r.db.WithContext(ctx).
-		Preload("User").
-		Preload("Songs.Artist").
-		Preload("Songs.Album").
-		Where("is_public = ?", true).
-		Order("created_at DESC").
-		Limit(limit).
-		Offset(offset).
-		Find(&playlists).Error
+	query := r.db.WithContext(ctx).Preload("User").Where("is_public = ?", true)
+	if includeSongs {
+		query = query.Preload("Songs.Artist").Preload("Songs.Album")
+	}
+	err := query.Order("created_at DESC").Limit(limit).Offset(offset).Find(&playlists).Error
 	return playlists, total, err
 }
 
@@ -207,4 +200,17 @@ func (r *PlaylistRepository) HasSong(ctx context.Context, playlistID, songID uin
 		return false, err
 	}
 	return count > 0, nil
+}
+
+func (r *PlaylistRepository) FindMemberSongIDs(ctx context.Context, playlistID uint, ownerID uuid.UUID, songIDs []uint) ([]uint, error) {
+	var playlist model.Playlist
+	tx := r.db.WithContext(ctx)
+	if err := tx.Select("id").Where("user_id = ?", ownerID).First(&playlist, playlistID).Error; err != nil {
+		return nil, translateNotFound(err)
+	}
+
+	ids := make([]uint, 0)
+	err := tx.Table(playlistSongsTable).Where("playlist_id = ? AND song_id IN ?", playlist.ID, songIDs).
+		Pluck("song_id", &ids).Error
+	return ids, err
 }

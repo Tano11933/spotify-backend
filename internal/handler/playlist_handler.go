@@ -57,7 +57,7 @@ func (h *PlaylistHandler) GetMine(c *fiber.Ctx) error {
 		return response.BadRequest(c, err.Error())
 	}
 
-	page, err := h.service.GetOwned(c.UserContext(), userID, params)
+	page, err := h.service.GetOwned(c.UserContext(), userID, params, c.QueryBool("include_songs", true))
 	if err != nil {
 		return playlistError(c, err)
 	}
@@ -71,7 +71,7 @@ func (h *PlaylistHandler) GetPublic(c *fiber.Ctx) error {
 		return response.BadRequest(c, err.Error())
 	}
 
-	page, err := h.service.GetPublic(c.UserContext(), params)
+	page, err := h.service.GetPublic(c.UserContext(), params, c.QueryBool("include_songs", true))
 	if err != nil {
 		return playlistError(c, err)
 	}
@@ -114,6 +114,26 @@ func (h *PlaylistHandler) GetSongs(c *fiber.Ctx) error {
 		return playlistError(c, err)
 	}
 	return c.JSON(page)
+}
+
+func (h *PlaylistHandler) GetMemberSongIDs(c *fiber.Ctx) error {
+	userID, ok := middleware.UserIDFromContext(c)
+	if !ok {
+		return response.Unauthorized(c, "unauthorized")
+	}
+	id, err := parseUintParam(c, "id")
+	if err != nil {
+		return response.BadRequest(c, "invalid id")
+	}
+	songIDs, err := parseIDList(c.Query("ids"), maxContainsIDs)
+	if err != nil {
+		return response.BadRequest(c, err.Error())
+	}
+	members, err := h.service.GetMemberSongIDs(c.UserContext(), id, userID, songIDs)
+	if err != nil {
+		return playlistError(c, err)
+	}
+	return c.JSON(fiber.Map{"song_ids": members})
 }
 
 func (h *PlaylistHandler) Update(c *fiber.Ctx) error {

@@ -59,16 +59,16 @@ func (s *PlaylistService) Create(
 	return playlist, nil
 }
 
-func (s *PlaylistService) GetOwned(ctx context.Context, userID uuid.UUID, params pagination.Params) (pagination.Page[model.Playlist], error) {
-	playlists, total, err := s.repo.FindPageByUserID(ctx, userID, params.Limit, params.Offset)
+func (s *PlaylistService) GetOwned(ctx context.Context, userID uuid.UUID, params pagination.Params, includeSongs bool) (pagination.Page[model.Playlist], error) {
+	playlists, total, err := s.repo.FindPageByUserID(ctx, userID, params.Limit, params.Offset, includeSongs)
 	if err != nil {
 		return pagination.Page[model.Playlist]{}, err
 	}
 	return pagination.NewPage(playlists, total, params), nil
 }
 
-func (s *PlaylistService) GetPublic(ctx context.Context, params pagination.Params) (pagination.Page[model.Playlist], error) {
-	playlists, total, err := s.repo.FindPagePublic(ctx, params.Limit, params.Offset)
+func (s *PlaylistService) GetPublic(ctx context.Context, params pagination.Params, includeSongs bool) (pagination.Page[model.Playlist], error) {
+	playlists, total, err := s.repo.FindPagePublic(ctx, params.Limit, params.Offset, includeSongs)
 	if err != nil {
 		return pagination.Page[model.Playlist]{}, err
 	}
@@ -103,6 +103,17 @@ func (s *PlaylistService) GetSongs(ctx context.Context, playlistID uint, viewerI
 		return pagination.Page[model.Song]{}, fmt.Errorf("list playlist songs: %w", err)
 	}
 	return pagination.NewPage(songs, total, params), nil
+}
+
+func (s *PlaylistService) GetMemberSongIDs(ctx context.Context, playlistID uint, ownerID uuid.UUID, songIDs []uint) ([]uint, error) {
+	ids, err := s.repo.FindMemberSongIDs(ctx, playlistID, ownerID, songIDs)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, ErrPlaylistNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list playlist song memberships: %w", err)
+	}
+	return ids, nil
 }
 
 func (s *PlaylistService) Update(

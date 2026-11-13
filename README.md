@@ -511,6 +511,7 @@ anonim juga.
 | PUT | `/api/playlists/:id` | 🔒 pemilik |
 | DELETE | `/api/playlists/:id` | 🔒 pemilik |
 | GET | `/api/playlists/:id/songs` | 🔒 pemilik, atau kalau publik |
+| GET | `/api/playlists/:id/songs/contains?ids=1,2` | 🔒 pemilik |
 | POST | `/api/playlists/:id/songs` | 🔒 pemilik |
 | DELETE | `/api/playlists/:id/songs/:songId` | 🔒 pemilik |
 
@@ -520,6 +521,9 @@ Lagu diurutkan berdasarkan ID naik. Gunakan offset berikutnya sebesar jumlah
 item yang sudah diterima. Setelah menambah atau menghapus lagu, muat ulang
 rentang dari offset 0 karena perubahan isi dapat menggeser halaman. Endpoint
 detail lama tetap menyertakan lagu untuk kompatibilitas dengan klien yang ada.
+Tambahkan `include_songs=false` pada daftar pribadi atau publik untuk mengambil
+metadata saja. Endpoint `contains` menerima hingga 100 ID dan mengembalikan
+`{"song_ids":[...]}` berisi ID lagu yang sudah ada di playlist.
 
 ```json
 // POST — user_id diambil dari token, TIDAK dari body

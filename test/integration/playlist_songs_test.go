@@ -90,6 +90,40 @@ func TestPlaylistSongPages(t *testing.T) {
 	if err := db.Model(&playlist).Update("is_public", true).Error; err != nil {
 		t.Fatal(err)
 	}
+	for _, path := range []string{"/api/playlists", "/api/playlists/public"} {
+		status, body := do(t, "GET", path+"?limit=100&include_songs=false", owner, nil)
+		if status != http.StatusOK {
+			t.Fatalf("metadata list: status %d, %v", status, body)
+		}
+		found := false
+		for _, row := range items(t, body) {
+			if row["id"] == float64(playlist.ID) {
+				found = true
+				if row["songs"] != nil {
+					t.Fatalf("metadata included songs: %v", row)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("metadata list did not include playlist %d", playlist.ID)
+		}
+	}
+	membership := fmt.Sprintf("%s/contains?ids=%d,99999999", path, songs[0].ID)
+	for _, tc := range []struct {
+		token string
+		want  int
+	}{{owner, http.StatusOK}, {viewer, http.StatusNotFound}, {"", http.StatusUnauthorized}} {
+		status, body := do(t, http.MethodGet, membership, tc.token, nil)
+		if status != tc.want {
+			t.Fatalf("membership: status %d, want %d", status, tc.want)
+		}
+		if status == http.StatusOK {
+			ids, ok := body["song_ids"].([]any)
+			if !ok || len(ids) != 1 || ids[0] != float64(songs[0].ID) {
+				t.Fatalf("unexpected membership: %v", body)
+			}
+		}
+	}
 	status, body := do(t, "GET", path+"?limit=1", viewer, nil)
 	if status != http.StatusOK || len(items(t, body)) != 1 {
 		t.Fatalf("public page: status %d, %v", status, body)
