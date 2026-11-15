@@ -104,6 +104,86 @@ func TestPlaybackQueueReservations(t *testing.T) {
 	}
 }
 
+func TestPlaybackQueueMove(t *testing.T) {
+	userID, owner := queueUser(t)
+	_, other := queueUser(t)
+	repo := repository.NewPlayerRepository(db)
+	ctx := context.Background()
+	for range 4 {
+		if err := repo.AppendToQueue(ctx, userID, fixtureSongID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const queuePath = "/api/me/player/queue/entries"
+	status, body := do(t, "GET", queuePath, owner, nil)
+	if status != 200 || len(items(t, body)) != 4 {
+		t.Fatalf("queue: %d %v", status, body)
+	}
+	rows := items(t, body)
+	first, gap := uint64(rows[0]["id"].(float64)), uint64(rows[1]["id"].(float64))
+	middle, last := uint64(rows[2]["id"].(float64)), uint64(rows[3]["id"].(float64))
+	if err := repo.RemoveQueueEntry(ctx, userID, gap); err != nil {
+		t.Fatal(err)
+	}
+	move := func(id uint64, direction, token string, want int, moved bool) {
+		t.Helper()
+		path := fmt.Sprintf("%s/%d/move", queuePath, id)
+		status, body := do(t, "POST", path, token, map[string]string{"direction": direction})
+		if status != want || (status == 200 && body["moved"] != moved) {
+			t.Fatalf("move %v %s: got %d %v, want %d (moved %t)", id, direction, status, body, want, moved)
+		}
+	}
+	move(middle, "up", "", 401, false)
+	move(middle, "up", other, 404, false)
+	move(gap, "up", owner, 404, false)
+	move(middle, "left", owner, 400, false)
+	move(first, "up", owner, 200, false)
+	move(last, "down", owner, 200, false)
+	move(middle, "up", owner, 200, true)
+	move(first, "down", owner, 200, true)
+
+	reserved, err := repo.ReserveQueueEntry(ctx, userID, 0)
+	if err != nil || reserved == nil || reserved.EntryID != middle {
+		t.Fatalf("next reservation: %v %v", reserved, err)
+	}
+	move(last, "up", owner, 409, false)
+	move(middle, "down", owner, 409, false)
+	if err := repo.ReleaseQueueEntry(ctx, userID, reserved.ID); err != nil {
+		t.Fatal(err)
+	}
+	move(last, "up", owner, 200, true)
+
+	status, body = do(t, "GET", queuePath+"?limit=2&offset=1", owner, nil)
+	paged := items(t, body)
+	if status != 200 || body["total"] != float64(3) || len(paged) != 2 ||
+		paged[0]["id"] != float64(middle) || paged[1]["id"] != float64(first) {
+		t.Fatalf("final order: %d %v", status, body)
+	}
+
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	for range 2 {
+		go func() {
+			<-start
+			moved, err := repo.MoveQueueEntry(ctx, userID, first, true)
+			if err == nil && !moved {
+				err = errors.New("entry did not move")
+			}
+			results <- err
+		}()
+	}
+	close(start)
+	for range 2 {
+		if err := <-results; err != nil {
+			t.Errorf("concurrent move: %v", err)
+		}
+	}
+	next, err := repo.ReserveQueueEntry(ctx, userID, 0)
+	if err != nil || next == nil || next.EntryID != first {
+		t.Fatalf("order after concurrent moves: %v %v", next, err)
+	}
+}
+
 func TestPlaybackQueueConcurrentReservations(t *testing.T) {
 	userID, _ := queueUser(t)
 	repo := repository.NewPlayerRepository(db)

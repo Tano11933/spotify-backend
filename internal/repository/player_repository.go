@@ -65,11 +65,7 @@ func (r *PlayerRepository) GetState(ctx context.Context, userID uuid.UUID) (*mod
 // AppendToQueue menambahkan lagu ke akhir antrean. Posisi dihitung di dalam
 // transaksi supaya dua request bersamaan tidak menghasilkan posisi yang sama.
 func (r *PlayerRepository) AppendToQueue(ctx context.Context, userID uuid.UUID, songID uint) error {
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var owner model.User
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").First(&owner, "id = ?", userID).Error; err != nil {
-			return err
-		}
+	return r.withQueueOrderLock(ctx, userID, func(tx *gorm.DB) error {
 		var maxPosition int
 		if err := tx.Model(&model.QueueItem{}).
 			Where("user_id = ?", userID).
@@ -85,6 +81,16 @@ func (r *PlayerRepository) AppendToQueue(ctx context.Context, userID uuid.UUID, 
 			AddedAt:  time.Now().UTC(),
 		}
 		return tx.Create(&item).Error
+	})
+}
+
+func (r *PlayerRepository) withQueueOrderLock(ctx context.Context, userID uuid.UUID, change func(*gorm.DB) error) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var owner model.User
+		if err := tx.Clauses(clause.Locking{Strength: "NO KEY UPDATE"}).Select("id").First(&owner, "id = ?", userID).Error; err != nil {
+			return translateNotFound(err)
+		}
+		return change(tx)
 	})
 }
 
@@ -116,11 +122,11 @@ func (r *PlayerRepository) queueQuery(ctx context.Context, userID uuid.UUID) *go
 // boleh ada lebih dari sekali (seperti Spotify), dan menghapus yang tidak ada
 // bukan error — idempoten.
 func (r *PlayerRepository) RemoveFromQueue(ctx context.Context, userID uuid.UUID, songID uint) error {
-	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := r.withQueueOrderLock(ctx, userID, func(tx *gorm.DB) error {
 		var item model.QueueItem
 
 		err := tx.Where("user_id = ? AND song_id = ?", userID, songID).
-			Order("position ASC").
+			Order("position ASC, id ASC").
 			First(&item).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil
@@ -131,6 +137,10 @@ func (r *PlayerRepository) RemoveFromQueue(ctx context.Context, userID uuid.UUID
 
 		return tx.Delete(&item).Error
 	})
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	return err
 }
 
 /* -------------------------------------------------------------------------

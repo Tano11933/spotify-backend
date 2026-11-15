@@ -10,6 +10,12 @@ DELETE /api/me/player/queue/entries/:entryId menghapus entri tersebut jika milik
 
 Endpoint GET /api/me/player/queue yang mengembalikan lagu, POST penambahan lagu, dan DELETE berdasarkan songId tetap tersedia untuk client lama. Frontend baru memakai identitas entri untuk memilih dan menghapus kemunculan yang tepat.
 
+## Mengubah urutan
+
+`POST /api/me/player/queue/entries/:entryId/move` menerima `{"direction":"up"}` atau `{"direction":"down"}`. Server menukar posisi entri dengan tetangganya dalam antrean akun. Respons `{"moved":true}` menandakan perubahan. Jika sudah di batas antrean, responsnya `{"moved":false}`.
+
+Server mengembalikan 400 untuk arah atau ID tidak valid, 404 untuk entri yang tidak ada atau milik akun lain, dan 409 jika salah satu dari dua entri punya reservasi aktif. Setelah respons sukses, muat ulang daftar dari offset 0 karena entri dapat berpindah halaman. Jika respons hilang karena gangguan jaringan, muat ulang sebelum mengulang aksi. Setiap request yang berhasil dapat menggeser entri satu langkah lagi.
+
 ## Reservasi sebelum memutar
 
 POST /api/me/player/queue/reservations menerima `{}` untuk entri tersedia berikutnya atau `{entry_id: 123}` untuk entri tertentu. Respons sukses berupa `{id, entry_id, expires_at, song}`. `id` adalah token reservasi UUID, berbeda dari ID entri.
@@ -19,7 +25,7 @@ POST /api/me/player/queue/reservations menerima `{}` untuk entri tersedia beriku
 - Pemilihan menggunakan transaksi dan SELECT FOR UPDATE SKIP LOCKED, diurutkan position lalu id.
 - Dua transaksi tidak memperoleh lease aktif untuk entri yang sama. Entri yang sedang dipegang perangkat lain dilewati pada pemilihan next.
 - Jika tidak ada entri tersedia untuk permintaan next, respons 200 berisi null. Permintaan entry_id tertentu yang tidak tersedia, sudah dipegang, atau bukan milik user dibalas 409 dengan pesan yang sama.
-- Penambahan antrean mengunci row pemilik selama penentuan posisi, agar append bersamaan tidak membuat posisi yang sama.
+- Penambahan, pemindahan, penghapusan berdasarkan songId, dan pemilihan reservasi memakai kunci baris akun yang sama agar posisi dan pilihan entri konsisten saat perangkat mengubah antrean bersamaan.
 
 ## Konfirmasi dan pelepasan
 

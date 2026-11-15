@@ -13,6 +13,7 @@ import (
 )
 
 var ErrQueueUnavailable = errors.New("queue entry is unavailable or reserved")
+var ErrQueueMoveReserved = errors.New("cannot move a reserved queue entry")
 
 func (r *PlayerRepository) FindQueueEntries(ctx context.Context, userID uuid.UUID, limit, offset int) ([]model.QueueEntry, int64, error) {
 	var rows []model.QueueItem
@@ -49,7 +50,7 @@ func (r *PlayerRepository) FindQueueEntries(ctx context.Context, userID uuid.UUI
 
 func (r *PlayerRepository) ReserveQueueEntry(ctx context.Context, userID uuid.UUID, entryID uint64) (*model.QueueReservation, error) {
 	var reservation *model.QueueReservation
-	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := r.withQueueOrderLock(ctx, userID, func(tx *gorm.DB) error {
 		now := time.Now().UTC()
 		var row model.QueueItem
 		query := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).
@@ -79,6 +80,12 @@ func (r *PlayerRepository) ReserveQueueEntry(ctx context.Context, userID uuid.UU
 		reservation = &model.QueueReservation{ID: token, EntryID: row.ID, ExpiresAt: expires, Song: song}
 		return nil
 	})
+	if errors.Is(err, ErrNotFound) {
+		if entryID != 0 {
+			return nil, ErrQueueUnavailable
+		}
+		return nil, nil
+	}
 	return reservation, err
 }
 
@@ -100,4 +107,44 @@ func (r *PlayerRepository) ReleaseQueueEntry(ctx context.Context, userID uuid.UU
 
 func (r *PlayerRepository) RemoveQueueEntry(ctx context.Context, userID uuid.UUID, entryID uint64) error {
 	return r.db.WithContext(ctx).Where("user_id = ? AND id = ?", userID, entryID).Delete(&model.QueueItem{}).Error
+}
+
+func (r *PlayerRepository) MoveQueueEntry(ctx context.Context, userID uuid.UUID, entryID uint64, up bool) (bool, error) {
+	moved := false
+	err := r.withQueueOrderLock(ctx, userID, func(tx *gorm.DB) error {
+		queue := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id = ?", userID)
+		var entry model.QueueItem
+		if err := queue.Session(&gorm.Session{}).First(&entry, entryID).Error; err != nil {
+			return translateNotFound(err)
+		}
+
+		neighborQuery := queue.Where("position > ?", entry.Position).Order("position ASC, id ASC")
+		if up {
+			neighborQuery = queue.Where("position < ?", entry.Position).Order("position DESC, id DESC")
+		}
+		var neighbor model.QueueItem
+		err := neighborQuery.Take(&neighbor).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+
+		now := time.Now().UTC()
+		if (entry.ReservedUntil != nil && entry.ReservedUntil.After(now)) ||
+			(neighbor.ReservedUntil != nil && neighbor.ReservedUntil.After(now)) {
+			return ErrQueueMoveReserved
+		}
+		originalPosition := entry.Position
+		if err := tx.Model(&entry).Update("position", neighbor.Position).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&neighbor).Update("position", originalPosition).Error; err != nil {
+			return err
+		}
+		moved = true
+		return nil
+	})
+	return moved && err == nil, err
 }

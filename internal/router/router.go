@@ -310,6 +310,7 @@ func registerPlayerRoutes(api fiber.Router, h *Handlers, mw *Middlewares) {
 	me.Get("/player/queue", h.Player.GetQueue)
 	me.Get("/player/queue/entries", h.Player.GetQueueEntries)
 	me.Delete("/player/queue/entries/:entryId", h.Player.RemoveQueueEntry)
+	me.Post("/player/queue/entries/:entryId/move", h.Player.MoveQueueEntry)
 	me.Post("/player/queue/reservations", h.Player.ReserveQueueEntry)
 	me.Post("/player/queue/reservations/:reservationId/confirm", h.Player.ConfirmQueueEntry)
 	me.Delete("/player/queue/reservations/:reservationId", h.Player.ReleaseQueueEntry)

@@ -31,3 +31,7 @@ func (s *PlayerService) ReleaseQueueEntry(ctx context.Context, userID uuid.UUID,
 func (s *PlayerService) RemoveQueueEntry(ctx context.Context, userID uuid.UUID, entryID uint64) error {
 	return s.repo.RemoveQueueEntry(ctx, userID, entryID)
 }
+
+func (s *PlayerService) MoveQueueEntry(ctx context.Context, userID uuid.UUID, entryID uint64, up bool) (bool, error) {
+	return s.repo.MoveQueueEntry(ctx, userID, entryID, up)
+}

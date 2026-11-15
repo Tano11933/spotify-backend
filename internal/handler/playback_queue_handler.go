@@ -1,12 +1,14 @@
 package handler
 
 import (
+	"errors"
 	"strconv"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"spotify-backend/internal/middleware"
 	"spotify-backend/internal/model"
+	"spotify-backend/internal/repository"
 	"spotify-backend/pkg/pagination"
 	"spotify-backend/pkg/response"
 )
@@ -86,4 +88,32 @@ func (h *PlayerHandler) RemoveQueueEntry(c *fiber.Ctx) error {
 		return playerError(c, err)
 	}
 	return c.JSON(model.MessageResponse{Message: "queue entry removed"})
+}
+
+func (h *PlayerHandler) MoveQueueEntry(c *fiber.Ctx) error {
+	userID, ok := middleware.UserIDFromContext(c)
+	if !ok {
+		return response.Unauthorized(c, "unauthorized")
+	}
+	id, err := strconv.ParseUint(c.Params("entryId"), 10, 63)
+	if err != nil || id == 0 {
+		return response.BadRequest(c, "invalid queue entry id")
+	}
+	var req struct {
+		Direction string `json:"direction"`
+	}
+	if err := c.BodyParser(&req); err != nil || (req.Direction != "up" && req.Direction != "down") {
+		return response.BadRequest(c, "direction must be up or down")
+	}
+	moved, err := h.service.MoveQueueEntry(c.UserContext(), userID, id, req.Direction == "up")
+	switch {
+	case errors.Is(err, repository.ErrNotFound):
+		return response.NotFound(c, "queue entry not found")
+	case errors.Is(err, repository.ErrQueueMoveReserved):
+		return response.Conflict(c, err.Error())
+	case err != nil:
+		return playerError(c, err)
+	default:
+		return c.JSON(fiber.Map{"moved": moved})
+	}
 }

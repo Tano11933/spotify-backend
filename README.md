@@ -643,6 +643,7 @@ hilang saat tab ditutup.
 | DELETE | `/api/me/player/queue/:songId` | Hapus kemunculan pertama lagu (idempoten) |
 | GET | `/api/me/player/queue/entries` | Antrean dengan ID entri terpisah: `{id, position, added_at, song}` |
 | DELETE | `/api/me/player/queue/entries/:entryId` | Hapus entri tertentu milik user (idempoten) |
+| POST | `/api/me/player/queue/entries/:entryId/move` | Pindahkan satu langkah dengan `{"direction":"up"}` atau `{"direction":"down"}` |
 | POST | `/api/me/player/queue/reservations` | Reservasi entri berikutnya, atau `{entry_id}` untuk entri tertentu |
 | POST | `/api/me/player/queue/reservations/:reservationId/confirm` | Konsumsi reservasi aktif milik user setelah audio berhasil mulai |
 | DELETE | `/api/me/player/queue/reservations/:reservationId` | Lepaskan reservasi tanpa menghapus entri |
