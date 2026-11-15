@@ -118,12 +118,12 @@ func (r *PlayerRepository) MoveQueueEntry(ctx context.Context, userID uuid.UUID,
 			return translateNotFound(err)
 		}
 
-		neighborQuery := queue.Where("position > ?", entry.Position).Order("position ASC, id ASC")
+		comparison, order := "position > ?", "position ASC, id ASC"
 		if up {
-			neighborQuery = queue.Where("position < ?", entry.Position).Order("position DESC, id DESC")
+			comparison, order = "position < ?", "position DESC, id DESC"
 		}
 		var neighbor model.QueueItem
-		err := neighborQuery.Take(&neighbor).Error
+		err := queue.Where(comparison, entry.Position).Order(order).Take(&neighbor).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil
 		}
